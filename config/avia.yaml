@@ -21,7 +21,7 @@ time_offset:
 
 preprocess:
   point_filter_num: 1
-  filter_size_surf: 0.1
+  filter_size_surf: 0.1 # 点云体素下采样中的体素大小
   lidar_type: 1 # Livox Avia LiDAR
   scan_line: 6
   blind: 0.8
@@ -66,7 +66,7 @@ uav:
   gravity_align_en: false
 
 publish:
-  dense_map_en: true
+  dense_map_en: false
   pub_effect_point_en: false 
   pub_plane_en: false
   pub_scan_num: 1
@@ -77,7 +77,7 @@ evo:
   pose_output_en: false
 
 pcd_save:
-  pcd_save_en: false
+  save_en: false
   colmap_output_en: false # need to set interval = -1
   filter_size_pcd: 0.15
   interval: -1

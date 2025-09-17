@@ -20,12 +20,31 @@ which is included as part of this source code package.
 #include <image_transport/image_transport.h>
 #include <nav_msgs/Path.h>
 #include <vikit/camera_loader.h>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <atomic>
+#include <functional>
 
 class LIVMapper
 {
 public:
   LIVMapper(ros::NodeHandle &nh);
   ~LIVMapper();
+  
+  // LAZ save thread structures
+  struct LazSaveTask {
+    std::string filename;
+    std::function<void()> save_function;
+    
+    LazSaveTask() = default;
+    LazSaveTask(const std::string& fname, std::function<void()> func) 
+      : filename(fname), save_function(func) {}
+  };
+  
+  void lazSaveWorker();
+  void queueLazSaveTask(const std::string& filename, std::function<void()> save_function);
   void initializeSubscribersAndPublishers(ros::NodeHandle &nh, image_transport::ImageTransport &it);
   void initializeComponents();
   void initializeFiles();
@@ -36,6 +55,8 @@ public:
   void handleVIO();
   void handleLIO();
   void savePCD();
+  template<typename PointT>
+  void saveAsLAZ(const std::string& filename, const pcl::PointCloud<PointT>& cloud);
   void processImu();
   
   bool sync_packages(LidarMeasureGroup &meas);
@@ -50,7 +71,9 @@ public:
   void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in);
   void img_cbk(const sensor_msgs::ImageConstPtr &msg_in);
   void publish_img_rgb(const image_transport::Publisher &pubImage, VIOManagerPtr vio_manager);
-  void publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, VIOManagerPtr vio_manager);
+  void publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, VIOManagerPtr vio_manager = nullptr);
+  void save_frame_world(const std::vector<PointToPlane> &ptpl_list);
+  void save_frame_world_RGB(PointCloudXYZRGB::Ptr &laserCloudWorldRGB);
   void publish_visual_sub_map(const ros::Publisher &pubSubVisualMap);
   void publish_effect_world(const ros::Publisher &pubLaserCloudEffect, const std::vector<PointToPlane> &ptpl_list);
   void publish_odometry(const ros::Publisher &pubOdomAftMapped);
@@ -84,8 +107,9 @@ public:
   double _first_lidar_time = 0.0;
   double match_time = 0, solve_time = 0, solve_const_H_time = 0;
 
-  bool lidar_map_inited = false, pcd_save_en = false, pub_effect_point_en = false, pose_output_en = false, ros_driver_fix_en = false, hilti_en = false;
-  int pcd_save_interval = -1, pcd_index = 0;
+  bool lidar_map_inited = false, save_en = false, pub_effect_point_en = false, pose_output_en = false, ros_driver_fix_en = false, hilti_en = false;
+  bool laz_save_en = false, effect_save_en = false;
+  int save_interval = -1, pcd_index = 0, scan_wait_num = 0;
   int pub_scan_num = 1;
 
   StatesGroup imu_propagate, latest_ekf_state;
@@ -138,6 +162,8 @@ public:
   PointCloudXYZI::Ptr pcl_wait_pub;
   PointCloudXYZRGB::Ptr pcl_wait_save;
   PointCloudXYZI::Ptr pcl_wait_save_intensity;
+  PointCloudXYZRGB::Ptr laserCloudWorldRGB_shared;
+  std::vector<PointToPlane> ptpl_list_wait_save;
 
   ofstream fout_pre, fout_out, fout_pcd_pos, fout_points;
 
@@ -183,5 +209,15 @@ public:
   double aver_time_icp = 0;
   double aver_time_map_inre = 0;
   bool colmap_output_en = false;
+  
+  std::string session_timestamp_;
+  std::string pcd_session_dir_;
+  
+  // LAZ save thread variables
+  std::thread laz_save_thread_;
+  std::queue<LazSaveTask> laz_save_queue_;
+  std::mutex laz_queue_mutex_;
+  std::condition_variable laz_queue_cv_;
+  std::atomic<bool> laz_stop_thread_{false};
 };
 #endif

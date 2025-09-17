@@ -99,6 +99,13 @@ find_package(OpenCV REQUIRED)
 find_package(Sophus REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
 
+# LAStools - set paths directly since we know they exist
+set(LASTOOLS_INCLUDE_DIR "/usr/local/include/LASlib")
+set(LASTOOLS_LIBRARY "/usr/lib/x86_64-linux-gnu/liblaszip.so.8")
+
+message(STATUS "Using LAStools include: ${LASTOOLS_INCLUDE_DIR}")
+message(STATUS "Using LAStools library: ${LASTOOLS_LIBRARY}")
+
 set(Sophus_LIBRARIES libSophus.so)
 
 # Define the catkin package
@@ -114,6 +121,8 @@ include_directories(
   ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   ${Sophus_INCLUDE_DIRS}
+  ${LASTOOLS_INCLUDE_DIR}
+  ${LASTOOLS_INCLUDE_DIR}/LASlib
   include
 )
 
@@ -127,6 +136,9 @@ add_library(laser_mapping src/LIVMapper.cpp)
 # Add the main executable
 add_executable(fastlivo_mapping src/main.cpp)
 
+# Add livox multi-lidar merger executable
+add_executable(livox_multi_lidar src/livox_multi_lidar.cpp)
+
 # Link libraries to the executable
 target_link_libraries(fastlivo_mapping
   laser_mapping
@@ -139,6 +151,14 @@ target_link_libraries(fastlivo_mapping
   ${OpenCV_LIBRARIES}
   ${Sophus_LIBRARIES}
   ${Boost_LIBRARIES}
+  ${LASTOOLS_LIBRARY}
+)
+
+# Link libraries to livox_multi_lidar executable
+target_link_libraries(
+  livox_multi_lidar
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
 )
 
 # Link mimalloc if found
