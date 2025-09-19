@@ -73,7 +73,7 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
 {
   nh.param<string>("common/lid_topic", lid_topic, "/livox/lidar");
   nh.param<string>("common/imu_topic", imu_topic, "/livox/imu");
-  nh.param<bool>("common/ros_driver_bug_fix", ros_driver_fix_en, false);
+    nh.param<bool>("common/ros_driver_bug_fix", ros_driver_fix_en, false);
   nh.param<int>("common/img_en", img_en, 1);
   nh.param<int>("common/lidar_en", lidar_en, 1);
   nh.param<string>("common/img_topic", img_topic, "/left_camera/image");
@@ -98,7 +98,11 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<bool>("uav/imu_rate_odom", imu_prop_enable, false);
   nh.param<bool>("uav/gravity_align_en", gravity_align_en, false);
 
-  
+  // ODOM parameters
+  nh.param<bool>("odom/use_odom", use_odom, true);
+  nh.param<double>("odom/odom_speed_tolerance", odom_speed_tolerance, 0.1);
+
+
   nh.param<string>("evo/seq_name", seq_name, "01");
   nh.param<bool>("evo/pose_output_en", pose_output_en, false);
   nh.param<double>("imu/gyr_cov", gyr_cov, 1.0);
@@ -234,11 +238,14 @@ void LIVMapper::initializeFiles()
 
 void LIVMapper::initializeSubscribersAndPublishers(ros::NodeHandle &nh, image_transport::ImageTransport &it) 
 {
-  sub_pcl = p_pre->lidar_type == AVIA ? 
-            nh.subscribe(lid_topic, 200000, &LIVMapper::livox_pcl_cbk, this): 
+  sub_pcl = p_pre->lidar_type == AVIA ?
+            nh.subscribe(lid_topic, 200000, &LIVMapper::livox_pcl_cbk, this):
             nh.subscribe(lid_topic, 200000, &LIVMapper::standard_pcl_cbk, this);
+  ROS_INFO("Using IMU from topic: %s", imu_topic.c_str());
   sub_imu = nh.subscribe(imu_topic, 200000, &LIVMapper::imu_cbk, this);
   sub_img = nh.subscribe(img_topic, 200000, &LIVMapper::img_cbk, this);
+  ROS_INFO("Using ODOM from topic: /novatel/oem7/odom");
+  sub_odom = nh.subscribe("/novatel/oem7/odom", 200000, &LIVMapper::odom_cbk, this);
   
   pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100);
   pubNormal = nh.advertise<visualization_msgs::MarkerArray>("visualization_marker", 100);
@@ -437,6 +444,51 @@ void LIVMapper::handleLIO()
   _state = voxelmap_manager->state_;
   _pv_list = voxelmap_manager->pv_list_;
   double t2 = omp_get_wtime();
+
+  /*
+    1. 预测层 - IMU预积分（在StateEstimation之外）
+
+    state_propagat - 这个状态是通过IMU预积分得到的
+    - IMU提供高频的角速度和加速度测量
+    - 通过预积分得到位姿的预测值
+    - 这个预测值作为ICP优化的初始值
+
+    2. 观测层 - 点云配准（BuildResidualListOMP）
+
+    // 构建观测：点云到平面的距离
+    for (int i = 0; i < effct_feat_num_; i++)
+    {
+        meas_vec(i) = -ptpl_list_[i].dis_to_plane_;  // 观测值
+    }
+    - 将当前帧点云与地图中的平面对齐
+    - 点到平面的距离作为观测量
+    - 这个观测值用于校正IMU的预测
+
+    3. 融合层 - 卡尔曼滤波（StateEstimation核心）
+
+    // 卡尔曼滤波融合预测和观测
+    solution = K_1.block<DIM_STATE, 6>(0, 0) * HTz +
+              vec.block<DIM_STATE, 1>(0, 0) -
+              G.block<DIM_STATE, 6>(0, 0) * vec.block<6, 1>(0, 0);
+    state_ += solution;  // 更新最终状态
+
+    关键区别：传统ICP vs 基于EKF的ICP
+
+    传统ICP：
+
+    // 直接最小化点到平面的距离
+    while (!converged) {
+        FindCorrespondences();
+        ComputeTransform();
+        ApplyTransform();
+    }
+
+    基于EKF的ICP：
+
+    // 使用卡尔曼滤波框架
+    Prediction:  state_pred = f(state_prev, imu_data)  // IMU预测
+    Correction:  state_corr = state_pred + K * (z - h(state_pred))  // 点云校正
+  */
 
   // 如果启用IMU传播，则更新相关标志和状态，为高频IMU传播提供最新的状态估计
   if (imu_prop_enable) 
@@ -824,6 +876,7 @@ void LIVMapper::standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     lid_raw_data_buffer.clear();
   }
   // ROS_INFO("get point cloud at time: %.6f", msg->header.stamp.toSec());
+
   PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
   p_pre->process(msg, ptr);
   lid_raw_data_buffer.push_back(ptr);
@@ -839,6 +892,7 @@ void LIVMapper::livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg_i
   if (!lidar_en) return;
   mtx_buffer.lock();
   livox_ros_driver::CustomMsg::Ptr msg(new livox_ros_driver::CustomMsg(*msg_in));
+
   // if ((abs(msg->header.stamp.toSec() - last_timestamp_lidar) > 0.2 && last_timestamp_lidar > 0) || sync_jump_flag)
   // {
   //   ROS_WARN("lidar jumps %.3f\n", msg->header.stamp.toSec() - last_timestamp_lidar);
@@ -860,6 +914,56 @@ void LIVMapper::livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg_i
     lid_raw_data_buffer.clear();
   }
   // ROS_INFO("get point cloud at time: %.6f", msg->header.stamp.toSec());
+
+  if(use_odom && newest_pos){
+    double time_diff = msg_in->header.stamp.toSec() - newest_pos->header.stamp.toSec();
+    int index_diff = int(time_diff / 0.02) - 1;
+    printf("point cloud time diff to odom: %.6f, index diff: %d\n", time_diff, index_diff);
+
+    // 检查odom_buffer是否有足够的数据进行插值
+    if (odom_buffer.empty() || abs(index_diff) >= static_cast<int>(odom_buffer.size())){
+      // 使用最新的odom数据进行运动补偿
+      for (int i=0; i<msg->point_num; i++){
+        msg->points[i].x += time_diff * newest_pos->twist.twist.linear.x;
+        msg->points[i].y += time_diff * newest_pos->twist.twist.linear.y;
+        msg->points[i].z += time_diff * newest_pos->twist.twist.linear.z;
+      }
+    }
+    else{
+      // 确保索引在有效范围内
+      int buffer_index = odom_buffer.size() - 1 + index_diff;
+      if (buffer_index >= 0 && buffer_index < static_cast<int>(odom_buffer.size())){
+        for (int i=0; i<msg->point_num; i++){
+          msg->points[i].x += time_diff * odom_buffer[buffer_index]->twist.twist.linear.x;
+          msg->points[i].y += time_diff * odom_buffer[buffer_index]->twist.twist.linear.y;
+          msg->points[i].z += time_diff * odom_buffer[buffer_index]->twist.twist.linear.z;
+        }
+      }
+      else{
+        // 索引超出范围，使用最新的odom数据
+        for (int i=0; i<msg->point_num; i++){
+          msg->points[i].x += time_diff * newest_pos->twist.twist.linear.x;
+          msg->points[i].y += time_diff * newest_pos->twist.twist.linear.y;
+          msg->points[i].z += time_diff * newest_pos->twist.twist.linear.z;
+        }
+      }
+    }
+
+    // 删除过时的odom数据 - 修复erase用法
+    if (!odom_buffer.empty()) {
+      int erase_end_index = odom_buffer.size() - 2 + index_diff;
+      // 确保索引在有效范围内
+      if (erase_end_index > 0 && erase_end_index <= static_cast<int>(odom_buffer.size())) {
+        // 将索引转换为迭代器
+        auto erase_end_it = odom_buffer.begin() + erase_end_index;
+        odom_buffer.erase(odom_buffer.begin(), erase_end_it);
+      }
+    }
+  }
+  else{
+    // Continue without ODOM compensation
+  }
+
   PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
   p_pre->process(msg, ptr);
 
@@ -930,12 +1034,20 @@ void LIVMapper::imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
   sig_buffer.notify_all();
 }
 
+void LIVMapper::odom_cbk(const nav_msgs::Odometry::ConstPtr &msg_in)
+{
+  nav_msgs::Odometry::Ptr new_odom_msg(new nav_msgs::Odometry(*msg_in));
+  odom_buffer.push_back(new_odom_msg);
+  newest_pos = new_odom_msg;
+}
+
 cv::Mat LIVMapper::getImageFromMsg(const sensor_msgs::ImageConstPtr &img_msg)
 {
   cv::Mat img;
   img = cv_bridge::toCvCopy(img_msg, "bgr8")->image;
   return img;
 }
+
 
 void LIVMapper::img_cbk(const sensor_msgs::ImageConstPtr &msg_in)
 {
@@ -1309,71 +1421,6 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
     if(laserCloudWorldRGB_shared->size() > 0)  PointCloudXYZI().swap(*pcl_wait_pub); 
     PointCloudXYZI().swap(*pcl_w_wait_pub);
   }
-  // /**************** save map ****************/
-  // /* 1. make sure you have enough memories
-  // /* 2. noted that pcd save will influence the real-time performences **/
-  // if (save_en)
-  // {
-  //   int size = feats_undistort->points.size();
-  //   PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI(size, 1));
-  //   static int scan_wait_num = 0;
-
-  //   if (img_en)
-  //   {
-  //     *pcl_wait_save += *laserCloudWorldRGB;
-  //   }
-  //   else
-  //   {
-  //     *pcl_wait_save_intensity += *pcl_w_wait_pub;
-  //   }
-  //   scan_wait_num++;
-
-  //   if ((pcl_wait_save->size() > 0 || pcl_wait_save_intensity->size() > 0) && save_interval > 0 && scan_wait_num >= save_interval)
-  //   {
-  //     pcd_index++;
-  //     string file_extension = laz_save_en ? ".laz" : ".pcd";
-  //     string all_points_dir(pcd_session_dir_ + "/" + to_string(pcd_index) + file_extension);
-      
-  //     if (save_en)
-  //     {
-  //       cout << "current scan saved to /PCD/" << all_points_dir << endl;
-  //       if (img_en)
-  //       {
-  //         if (laz_save_en) {
-  //           // Queue LAZ save task to separate thread
-  //           auto pcl_wait_save_copy = *pcl_wait_save;
-  //           queueLazSaveTask(all_points_dir, [this, all_points_dir, pcl_wait_save_copy]() {
-  //             saveAsLAZ(all_points_dir, pcl_wait_save_copy);
-  //           });
-  //         } else {
-  //           pcl::PCDWriter pcd_writer;
-  //           pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
-  //         }
-  //         PointCloudXYZRGB().swap(*pcl_wait_save);
-  //       }
-  //       else
-  //       {
-  //         if (laz_save_en) {
-  //           // Queue LAZ save task to separate thread
-  //           auto pcl_wait_save_intensity_copy = *pcl_wait_save_intensity;
-  //           queueLazSaveTask(all_points_dir, [this, all_points_dir, pcl_wait_save_intensity_copy]() {
-  //             saveAsLAZ(all_points_dir, pcl_wait_save_intensity_copy);
-  //           });
-  //         } else {
-  //           pcl::PCDWriter pcd_writer;
-  //           pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_intensity);
-  //         }
-  //         PointCloudXYZI().swap(*pcl_wait_save_intensity);
-  //       }        
-  //       Eigen::Quaterniond q(_state.rot_end);
-  //       fout_pcd_pos << _state.pos_end[0] << " " << _state.pos_end[1] << " " << _state.pos_end[2] << " " << q.w() << " " << q.x() << " " << q.y()
-  //                    << " " << q.z() << " " << endl;
-  //       scan_wait_num = 0;
-  //     }
-  //   }
-  // }
-  // if(laserCloudWorldRGB->size() > 0)  PointCloudXYZI().swap(*pcl_wait_pub); 
-  // PointCloudXYZI().swap(*pcl_w_wait_pub);
 }
 
 void LIVMapper::save_frame_world_RGB(PointCloudXYZRGB::Ptr &laserCloudWorldRGB)
@@ -1440,7 +1487,6 @@ void LIVMapper::save_frame_world(const std::vector<PointToPlane> &ptpl_list)
     if ((pcl_wait_save_intensity->size() > 0 || ptpl_list_wait_save.size() > 0) && save_interval > 0 && scan_wait_num >= save_interval)
     {
       pcd_index++;
-      printf("Saving map %d ...\n", pcd_index);
       string file_extension = laz_save_en ? ".laz" : ".pcd";
       string all_points_dir(pcd_session_dir_ + "/" + to_string(pcd_index) + file_extension);
       
@@ -1453,6 +1499,7 @@ void LIVMapper::save_frame_world(const std::vector<PointToPlane> &ptpl_list)
           laserCloudWorld->points[i].x = ptpl_list_wait_save[i].point_w_[0];
           laserCloudWorld->points[i].y = ptpl_list_wait_save[i].point_w_[1];
           laserCloudWorld->points[i].z = ptpl_list_wait_save[i].point_w_[2];
+          laserCloudWorld->points[i].intensity = ptpl_list_wait_save[i].intensity_;
         }
         auto pcl_wait_save_copy = *laserCloudWorld;
         if (laz_save_en) {
@@ -1518,6 +1565,7 @@ void LIVMapper::publish_effect_world(const ros::Publisher &pubLaserCloudEffect, 
     laserCloudWorld->points[i].x = ptpl_list[i].point_w_[0];
     laserCloudWorld->points[i].y = ptpl_list[i].point_w_[1];
     laserCloudWorld->points[i].z = ptpl_list[i].point_w_[2];
+    laserCloudWorld->points[i].intensity = ptpl_list[i].intensity_;
   }
   sensor_msgs::PointCloud2 laserCloudFullRes3;
   pcl::toROSMsg(*laserCloudWorld, laserCloudFullRes3);
@@ -1675,8 +1723,8 @@ void LIVMapper::saveAsLAZ(const std::string& filename, const pcl::PointCloud<Poi
   // Always destroy the writer
   laszip_destroy(laszip_writer);
   
-  std::cout << GREEN << "Point cloud saved as LAZ: " << filename 
-            << " with " << cloud.points.size() << " points" << RESET << std::endl;
+  // std::cout << GREEN << "Point cloud saved as LAZ: " << filename 
+  //           << " with " << cloud.points.size() << " points" << RESET << std::endl;
 }
 
 // Explicit template instantiation
@@ -1712,9 +1760,9 @@ void LIVMapper::lazSaveWorker()
     // Execute the save task outside of lock
     if (task.save_function) {
       try {
-        std::cout << YELLOW << "Starting LAZ save to: " << task.filename << RESET << std::endl;
+        // std::cout << YELLOW << "Starting LAZ save to: " << task.filename << RESET << std::endl;
         task.save_function();
-        std::cout << GREEN << "Completed LAZ save to: " << task.filename << RESET << std::endl;
+        // std::cout << GREEN << "Completed LAZ save to: " << task.filename << RESET << std::endl;
       } catch (const std::exception& e) {
         std::cerr << RED << "Error saving LAZ file " << task.filename << ": " << e.what() << RESET << std::endl;
       }
@@ -1733,6 +1781,6 @@ void LIVMapper::queueLazSaveTask(const std::string& filename, std::function<void
   
   // Notify worker thread
   laz_queue_cv_.notify_one();
-  
+
   std::cout << CYAN << "Queued LAZ save task: " << filename << " (queue size: " << laz_save_queue_.size() << ")" << RESET << std::endl;
 }

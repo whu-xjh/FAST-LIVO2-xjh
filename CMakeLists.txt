@@ -30,9 +30,9 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|aarch64|ARM|AARCH64)")
   endif()
   add_definitions(-DARM_ARCH)
 else()
-  # x86-64 (Intel/AMD) optimizations
-  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -mtune=native -funroll-loops") #-flto
-  message(STATUS "Using general x86 optimizations: -O3 -march=native -mtune=native -funroll-loops") 
+  # x86-64 (Intel/AMD) optimizations - reduced to avoid compiler crash
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -march=native")
+  message(STATUS "Using conservative x86 optimizations: -O2 -march=native")
   add_definitions(-DX86_ARCH)
 endif()
 
@@ -101,10 +101,12 @@ find_package(Boost REQUIRED COMPONENTS thread)
 
 # LAStools - set paths directly since we know they exist
 set(LASTOOLS_INCLUDE_DIR "/usr/local/include/LASlib")
-set(LASTOOLS_LIBRARY "/usr/lib/x86_64-linux-gnu/liblaszip.so.8")
+set(LASTOOLS_LIBRARY "/usr/local/lib/liblaszip.so.8")
+set(laszip_INCLUDE_DIR "/usr/local/include/laszip")
 
 message(STATUS "Using LAStools include: ${LASTOOLS_INCLUDE_DIR}")
 message(STATUS "Using LAStools library: ${LASTOOLS_LIBRARY}")
+message(STATUS "USing laszio include: ${laszip_INCLUDE_DIR}")
 
 set(Sophus_LIBRARIES libSophus.so)
 
@@ -122,7 +124,7 @@ include_directories(
   ${OpenCV_INCLUDE_DIRS}
   ${Sophus_INCLUDE_DIRS}
   ${LASTOOLS_INCLUDE_DIR}
-  ${LASTOOLS_INCLUDE_DIR}/LASlib
+  ${laszip_INCLUDE_DIR}
   include
 )
 

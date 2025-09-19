@@ -417,7 +417,8 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
   vector<pointWithVar>().swap(pv_list_);
   pv_list_.resize(feats_down_size_);
 
-  int rematch_num = 0;
+  // 初始化卡尔曼滤波相关矩阵
+  int rematch_num = 0; // 重新匹配计数器
   MD(DIM_STATE, DIM_STATE) G, H_T_H, I_STATE;
   G.setZero(); // 卡尔曼滤波的增益矩阵
   H_T_H.setZero(); // 观测矩阵的加权平方和
@@ -440,8 +441,9 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
       pointWithVar &pv = pv_list_[i];
       pv.point_b << feats_down_body_->points[i].x, feats_down_body_->points[i].y, feats_down_body_->points[i].z;
       pv.point_w << world_lidar->points[i].x, world_lidar->points[i].y, world_lidar->points[i].z;
+      pv.intensity = feats_down_body_->points[i].intensity;  // 提取点云强度信息
       
-      // 计算点云在世界坐标系下的总协方差,包括测量噪声,旋转误差和平移误差
+      // 计算点云在世界坐标系下的总协方差:测量噪声 + 旋转误差 + 平移误差
       M3D cov = body_cov_list_[i];
       M3D point_crossmat = cross_mat_list_[i];
       cov = state_.rot_end * cov * state_.rot_end.transpose() + (-point_crossmat) * rot_var * (-point_crossmat.transpose()) + t_var;
@@ -466,12 +468,14 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
 
     /*** Computation of Measuremnt Jacobian matrix H and measurents covarience
      * ***/
-    // 计算雅可比矩阵和测量向量
-    MatrixXd Hsub(effct_feat_num_, 6);
-    MatrixXd Hsub_T_R_inv(6, effct_feat_num_);
-    VectorXd R_inv(effct_feat_num_);
-    VectorXd meas_vec(effct_feat_num_);
+    // 构建观测模型, 初始化观测矩阵
+    MatrixXd Hsub(effct_feat_num_, 6); // 观测雅可比矩阵
+    MatrixXd Hsub_T_R_inv(6, effct_feat_num_); // 加权后的观测雅可比矩阵
+    VectorXd R_inv(effct_feat_num_); // 观测噪声的逆协方差矩阵
+    VectorXd meas_vec(effct_feat_num_); // 观测残差向量
     meas_vec.setZero();
+
+    // 为每个有效特征点计算观测雅可比矩阵和观测噪声协方差
     for (int i = 0; i < effct_feat_num_; i++)
     {
       auto &ptpl = ptpl_list_[i];
@@ -482,11 +486,11 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
       point_crossmat << SKEW_SYM_MATRX(point_this);
 
       /*** get the normal vector of closest surface/corner ***/
-      // 对每个有效特征点计算测量协方差矩阵R
+      // 计算平面参数的雅可比矩阵J_nq
       V3D point_world = state_propagat.rot_end * point_this + state_propagat.pos_end;
       Eigen::Matrix<double, 1, 6> J_nq;
-      J_nq.block<1, 3>(0, 0) = point_world - ptpl_list_[i].center_;
-      J_nq.block<1, 3>(0, 3) = -ptpl_list_[i].normal_;
+      J_nq.block<1, 3>(0, 0) = point_world - ptpl_list_[i].center_; // 位置部分
+      J_nq.block<1, 3>(0, 3) = -ptpl_list_[i].normal_; // 法向量部分
 
       M3D var;
       // V3D normal_b = state_.rot_end.inverse() * ptpl_list_[i].normal_;
@@ -503,21 +507,22 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
       //       state_propagat.cov.block<3, 3>(3, 3) - point_crossmat * state_propagat.cov.block<3, 3>(0, 0) * point_crossmat;
 
       // point_body cov
-      // 计算点到平面距离状态的雅可比
-      // 前3列为旋转部分，后3列为平移部分
+      // 计算测量协方差矩阵R
       var = state_propagat.rot_end * extR_ * ptpl_list_[i].body_cov_ * (state_propagat.rot_end * extR_).transpose();
       double sigma_l = J_nq * ptpl_list_[i].plane_var_ * J_nq.transpose();
       R_inv(i) = 1.0 / (0.001 + sigma_l + ptpl_list_[i].normal_.transpose() * var * ptpl_list_[i].normal_);
       // R_inv(i) = 1.0 / (sigma_l + ptpl_list_[i].normal_.transpose() * var * ptpl_list_[i].normal_);
 
       /*** calculate the Measuremnt Jacobian matrix H ***/
-      // 计算观测噪声的协方差,包括平面拟合误差和点云测量误差
+      // 计算观测雅可比矩阵H
       V3D A(point_crossmat * state_.rot_end.transpose() * ptpl_list_[i].normal_);
       Hsub.row(i) << VEC_FROM_ARRAY(A), ptpl_list_[i].normal_[0], ptpl_list_[i].normal_[1], ptpl_list_[i].normal_[2];
       Hsub_T_R_inv.col(i) << A[0] * R_inv(i), A[1] * R_inv(i), A[2] * R_inv(i), ptpl_list_[i].normal_[0] * R_inv(i),
           ptpl_list_[i].normal_[1] * R_inv(i), ptpl_list_[i].normal_[2] * R_inv(i);
       meas_vec(i) = -ptpl_list_[i].dis_to_plane_;
     }
+
+    // 卡尔曼滤波迭代更新
     EKF_stop_flg = false;
     flg_EKF_converged = false;
     /*** Iterative Kalman Filter Update ***/
@@ -533,14 +538,17 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     VD(DIM_STATE)
     solution = K_1.block<DIM_STATE, 6>(0, 0) * HTz + vec.block<DIM_STATE, 1>(0, 0) - G.block<DIM_STATE, 6>(0, 0) * vec.block<6, 1>(0, 0);
     int minRow, minCol;
+
+    // 更新状态(位姿)
     state_ += solution;
+
+    // 检查收敛性
     auto rot_add = solution.block<3, 1>(0, 0);
     auto t_add = solution.block<3, 1>(3, 0);
     if ((rot_add.norm() * 57.3 < 0.01) && (t_add.norm() * 100 < 0.015)) { flg_EKF_converged = true; }
     V3D euler_cur = state_.rot_end.eulerAngles(2, 1, 0);
 
     /*** Rematch Judgement ***/
-
     if (flg_EKF_converged || ((rematch_num == 0) && (iterCount == (config_setting_.max_iterations_ - 2)))) { rematch_num++; }
 
     /*** Convergence Judgements and Covariance Update ***/
@@ -607,6 +615,7 @@ void VoxelMapManager::BuildVoxelMap()
   {
     pointWithVar pv;
     pv.point_w << feats_down_world_->points[i].x, feats_down_world_->points[i].y, feats_down_world_->points[i].z;
+    pv.intensity = feats_down_world_->points[i].intensity;  // 提取点云强度信息
     V3D point_this(feats_down_body_->points[i].x, feats_down_body_->points[i].y, feats_down_body_->points[i].z);
     M3D var;
     // 计算点在传感器坐标系下的协方差矩阵
@@ -714,45 +723,60 @@ void VoxelMapManager::UpdateVoxelMap(const std::vector<pointWithVar> &input_poin
   }
 }
 
+// 为每个点云寻找对应的平面,并计算点到平面的距离，用于ICP配准
 void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, std::vector<PointToPlane> &ptpl_list)
 {
-  int max_layer = config_setting_.max_layer_;
-  double voxel_size = config_setting_.max_voxel_size_;
-  double sigma_num = config_setting_.sigma_num_;
-  std::mutex mylock;
+  int max_layer = config_setting_.max_layer_; // 获取最大八叉树层数
+  double voxel_size = config_setting_.max_voxel_size_; // 获取体素大小
+  double sigma_num = config_setting_.sigma_num_; // 获取标准差倍数
+  std::mutex mylock; // 线程锁,用于多线程同步,保护共享资源
   ptpl_list.clear();
-  std::vector<PointToPlane> all_ptpl_list(pv_list.size());
-  std::vector<bool> useful_ptpl(pv_list.size());
-  std::vector<size_t> index(pv_list.size());
+
+  std::vector<PointToPlane> all_ptpl_list(pv_list.size()); // 存储所有点面的对应关系
+  std::vector<bool> useful_ptpl(pv_list.size()); // 标记每个点是否找到有效的平面
+  std::vector<size_t> index(pv_list.size()); // 索引数组,用于多线程处理
+
+  // 初始化索引和标记数组
   for (size_t i = 0; i < index.size(); ++i)
   {
     index[i] = i;
     useful_ptpl[i] = false;
   }
+
+  // 多线程处理每个点云
   #ifdef MP_EN
-    omp_set_num_threads(MP_PROC_NUM);
-    #pragma omp parallel for
+    omp_set_num_threads(MP_PROC_NUM); // 设置使用的线程数
+    #pragma omp parallel for // 启动并行for循环
   #endif
+
+  // 主循环,为每个点寻找对应的平面
   for (int i = 0; i < index.size(); i++)
   {
-    pointWithVar &pv = pv_list[i];
+    pointWithVar &pv = pv_list[i]; // 获取当前点云
+
+    // 计算点云所在的体素位置
     float loc_xyz[3];
     for (int j = 0; j < 3; j++)
     {
       loc_xyz[j] = pv.point_w[j] / voxel_size;
       if (loc_xyz[j] < 0) { loc_xyz[j] -= 1.0; }
     }
-    VOXEL_LOCATION position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
+    VOXEL_LOCATION position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]); // 创建当前点云对应的体素
+
+    // 在体素地图中查找对应的体素
     auto iter = voxel_map_.find(position);
-    if (iter != voxel_map_.end())
+    if (iter != voxel_map_.end()) // 如果找到体素
     {
-      VoxelOctoTree *current_octo = iter->second;
-      PointToPlane single_ptpl;
-      bool is_sucess = false;
-      double prob = 0;
+      VoxelOctoTree *current_octo = iter->second; // 获取体素对应的八叉树节点
+      PointToPlane single_ptpl{}; // 存储当前点对应的平面信息
+      bool is_sucess = false; // 标记是否成功找到平面
+      double prob = 0; // 存储点到平面的概率值
+
+      // 在当前体素的八叉树中寻找对应的平面,如果找到则构建点到平面的残差
       build_single_residual(pv, current_octo, 0, is_sucess, prob, single_ptpl);
       if (!is_sucess)
-      {
+      { 
+        // 如果当前体素未找到有效平面,则检查相邻体素
         VOXEL_LOCATION near_position = position;
         if (loc_xyz[0] > (current_octo->voxel_center_[0] + current_octo->quater_length_)) { near_position.x = near_position.x + 1; }
         else if (loc_xyz[0] < (current_octo->voxel_center_[0] - current_octo->quater_length_)) { near_position.x = near_position.x - 1; }
@@ -760,11 +784,12 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
         else if (loc_xyz[1] < (current_octo->voxel_center_[1] - current_octo->quater_length_)) { near_position.y = near_position.y - 1; }
         if (loc_xyz[2] > (current_octo->voxel_center_[2] + current_octo->quater_length_)) { near_position.z = near_position.z + 1; }
         else if (loc_xyz[2] < (current_octo->voxel_center_[2] - current_octo->quater_length_)) { near_position.z = near_position.z - 1; }
+        // 在相邻体素中查找平面,如果找到则构建残差
         auto iter_near = voxel_map_.find(near_position);
         if (iter_near != voxel_map_.end()) { build_single_residual(pv, iter_near->second, 0, is_sucess, prob, single_ptpl); }
       }
       if (is_sucess)
-      {
+      { // 如果成功找到平面,则将点面对应关系存储到共享资源中
         mylock.lock();
         useful_ptpl[i] = true;
         all_ptpl_list[i] = single_ptpl;
@@ -778,6 +803,7 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
       }
     }
   }
+  // 将所有有效的点面对应关系存储到最终的列表中
   for (size_t i = 0; i < useful_ptpl.size(); i++)
   {
     if (useful_ptpl[i]) { ptpl_list.push_back(all_ptpl_list[i]); }
@@ -819,6 +845,7 @@ void VoxelMapManager::build_single_residual(pointWithVar &pv, const VoxelOctoTre
           single_ptpl.body_cov_ = pv.body_var;
           single_ptpl.point_b_ = pv.point_b;
           single_ptpl.point_w_ = pv.point_w;
+          single_ptpl.intensity_ = pv.intensity;  // 传递强度信息
           single_ptpl.plane_var_ = plane.plane_var_;
           single_ptpl.normal_ = plane.normal_;
           single_ptpl.center_ = plane.center_;

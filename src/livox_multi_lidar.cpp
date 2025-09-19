@@ -47,10 +47,10 @@ public:
         merged_pub_ = nh_.advertise<livox_ros_driver::CustomMsg>(output_topic_, 10);
         
         // 创建订阅者
-        sub_159_ = nh_.subscribe(input_topic_159_, 10, &LivoxLidarMerger::lidar159Callback, this);
-        sub_160_ = nh_.subscribe(input_topic_160_, 10, &LivoxLidarMerger::lidar160Callback, this);
-        sub_161_ = nh_.subscribe(input_topic_161_, 10, &LivoxLidarMerger::lidar161Callback, this);
-        
+        sub_159_ = nh_.subscribe(input_topic_159_, 100, &LivoxLidarMerger::lidar159Callback, this);
+        sub_160_ = nh_.subscribe(input_topic_160_, 100, &LivoxLidarMerger::lidar160Callback, this);
+        sub_161_ = nh_.subscribe(input_topic_161_, 100, &LivoxLidarMerger::lidar161Callback, this);
+
         // 初始化标志位和缓存
         has_159_data_ = false;
         has_160_data_ = false;
@@ -82,56 +82,154 @@ private:
         }
     }
     
-    // 合并并发布数据
+    // 合并并发布数据（基于时间戳排序的新版本）
     void mergeAndPublish() {
         if (has_159_data_ && has_160_data_ && has_161_data_) {
+            writeLog("Starting timestamp-based merging");
+            
+            size_t total_points = msg_159_->point_num + msg_160_->point_num + msg_161_->point_num;
+
+            std::vector<std::tuple<uint64_t, int, size_t>> sorted_indices;  // (time, source_id, point_index)
+            sorted_indices.reserve(total_points);
+            
+            size_t idx = 0;
+            for (const auto& point : msg_159_->points) {
+                uint64_t time = msg_159_->timebase + point.offset_time;
+                sorted_indices.emplace_back(time, 159, idx++);
+            }
+            idx = 0;
+            for (const auto& point : msg_160_->points) {
+                uint64_t time = msg_160_->timebase + point.offset_time;
+                sorted_indices.emplace_back(time, 160, idx++);
+            }
+            idx = 0;
+            for (const auto& point : msg_161_->points) {
+                uint64_t time = msg_161_->timebase + point.offset_time;
+                sorted_indices.emplace_back(time, 161, idx++); 
+            }
+
+            // 排序
+            std::sort(sorted_indices.begin(), sorted_indices.end());
+
             // 创建合并后的消息
             livox_ros_driver::CustomMsg merged_msg;
-            
-            // 复制头部信息（使用159的头部信息）
-            merged_msg.header = msg_159_->header;
-            merged_msg.timebase = msg_159_->timebase;
-            
-            // 计算160、161的timebase相对于159的偏移
-            uint64_t timebase_offset_160 = msg_160_->timebase - msg_159_->timebase;
-            uint64_t timebase_offset_161 = msg_161_->timebase - msg_159_->timebase;
-            
-            writeLog("Timebase offsets: 160=" + std::to_string(timebase_offset_160) + 
-                    ", 161=" + std::to_string(timebase_offset_161));
-
-            // 计算总点数
-            int total_points = msg_159_->point_num + msg_160_->point_num + msg_161_->point_num;
+            if (msg_159_->timebase < msg_160_->timebase && msg_159_->timebase < msg_161_->timebase) {
+                merged_msg.header = msg_159_->header;  // 使用159的头部信息
+                merged_msg.timebase = msg_159_->timebase; // 159
+            } else if (msg_160_->timebase < msg_159_->timebase && msg_160_->timebase < msg_161_->timebase) {
+                merged_msg.header = msg_160_->header;  // 使用160的头部信息
+                merged_msg.timebase = msg_160_->timebase; // 160
+            } else {
+                merged_msg.header = msg_161_->header;  // 使用161的头部信息
+                merged_msg.timebase = msg_161_->timebase; // 161
+            }
             merged_msg.point_num = total_points;
-            
-            // 预分配空间
             merged_msg.points.reserve(total_points);
-            
-            // 复制159的点（不需要时间偏移，保持原始时间）
-            merged_msg.points.insert(merged_msg.points.end(), msg_159_->points.begin(), msg_159_->points.end());
-            
-            // 优化：先插入再批量修改
-            size_t start_160 = merged_msg.points.size();
-            merged_msg.points.insert(merged_msg.points.end(), msg_160_->points.begin(), msg_160_->points.end());
-            
-            // 批量修改160的时间戳（仍需遍历，但减少了复制操作）
-            for (size_t i = start_160; i < merged_msg.points.size(); ++i) {
-                merged_msg.points[i].offset_time += timebase_offset_160;
+
+            for (const auto& [time, source_id, point_idx] : sorted_indices) {
+                livox_ros_driver::CustomPoint adjusted_point;
+                if (source_id == 159) adjusted_point = msg_159_->points[point_idx];
+                else if (source_id == 160) adjusted_point = msg_160_->points[point_idx];
+                else if (source_id == 161) adjusted_point = msg_161_->points[point_idx];
+                else continue; // 不应该发生
+                adjusted_point.offset_time = time - merged_msg.timebase;
+                merged_msg.points.push_back(adjusted_point);
             }
-            
-            // 对161做同样处理
-            size_t start_161 = merged_msg.points.size();
-            merged_msg.points.insert(merged_msg.points.end(), msg_161_->points.begin(), msg_161_->points.end());
-            
-            for (size_t i = start_161; i < merged_msg.points.size(); ++i) {
-                merged_msg.points[i].offset_time += timebase_offset_161;
-            }
-            
+
+            /*  Another version of merging topics based on time alignment
+                // 创建时间戳点对结构
+                struct TimestampedPoint {
+                    uint64_t absolute_time;  // 绝对时间戳
+                    livox_ros_driver::CustomPoint point;
+                    int source_id;  // 159, 160, or 161
+                    
+                    // 用于排序的比较运算符
+                    bool operator<(const TimestampedPoint& other) const {
+                        return absolute_time < other.absolute_time;
+                    }
+                };
+                
+                // 计算总点数并创建容器
+                int total_points = msg_159_->point_num + msg_160_->point_num + msg_161_->point_num;
+                std::vector<TimestampedPoint> timestamped_points;
+                timestamped_points.reserve(total_points);
+                
+                // 处理159的点云（作为参考时间基准）
+                for (const auto& point : msg_159_->points) {
+                    TimestampedPoint tp;
+                    tp.absolute_time = msg_159_->timebase + point.offset_time;
+                    tp.point = point;
+                    tp.source_id = 159;
+                    timestamped_points.push_back(tp);
+                }
+                
+                // 处理160的点云（转换到绝对时间）
+                for (const auto& point : msg_160_->points) {
+                    TimestampedPoint tp;
+                    tp.absolute_time = msg_160_->timebase + point.offset_time;
+                    tp.point = point;
+                    tp.source_id = 160;
+                    timestamped_points.push_back(tp);
+                }
+                
+                // 处理161的点云（转换到绝对时间）
+                for (const auto& point : msg_161_->points) {
+                    TimestampedPoint tp;
+                    tp.absolute_time = msg_161_->timebase + point.offset_time;
+                    tp.point = point;
+                    tp.source_id = 161;
+                    timestamped_points.push_back(tp);
+                }
+                
+                // 按时间戳排序
+                std::sort(timestamped_points.begin(), timestamped_points.end());
+                
+                // 创建合并后的消息
+                livox_ros_driver::CustomMsg merged_msg;
+                merged_msg.header = msg_159_->header;  // 使用159的头部信息
+                merged_msg.timebase = msg_159_->timebase;
+                merged_msg.point_num = total_points;
+                merged_msg.points.reserve(total_points);
+                
+                if (msg_159_->timebase < msg_160_->timebase && msg_159_->timebase < msg_161_->timebase) {
+                    merged_msg.timebase = msg_159_->timebase; // 159
+                } else if (msg_160_->timebase < msg_159_->timebase && msg_160_->timebase < msg_161_->timebase) {
+                    merged_msg.timebase = msg_160_->timebase; // 160
+                } else {
+                    merged_msg.timebase = msg_161_->timebase; // 161
+                }
+
+                // 将排序后的点转换为相对时间
+                for (const auto& tp : timestamped_points) {
+                    livox_ros_driver::CustomPoint adjusted_point = tp.point;
+                    
+                    // 计算相对于timebase的偏移时间
+                    if (tp.absolute_time >= merged_msg.timebase) {
+                        adjusted_point.offset_time = tp.absolute_time - merged_msg.timebase;
+                    } else {
+                        // // 处理时间戳小于基准的情况（理论上不应该发生）
+                        // writeLog("Warning: Point timestamp " + std::to_string(tp.absolute_time) + 
+                        //         " is before reference timebase " + std::to_string(merged_msg.timebase));
+                        continue; // 跳过这个点
+                    }
+                    
+                    merged_msg.points.push_back(adjusted_point);
+                }
+            */
+
             // 发布合并后的消息
             merged_pub_.publish(merged_msg);
-            writeLog("Published merged message with " + std::to_string(total_points) + " points (" +
-                    std::to_string(msg_159_->point_num) + " from 159, " +
-                    std::to_string(msg_160_->point_num) + " from 160 (offset+" + std::to_string(timebase_offset_160) + "), " +
-                    std::to_string(msg_161_->point_num) + " from 161 (offset+" + std::to_string(timebase_offset_161) + "))");
+            
+            // 统计信息
+            uint64_t min_time = std::get<0>(sorted_indices.front());
+            uint64_t max_time = std::get<0>(sorted_indices.back());
+            double time_span = (max_time - min_time) / 1000000000.0; // 转换为秒
+            
+            writeLog("Published timestamp-sorted merged message with " + std::to_string(total_points) + " points");
+            writeLog("Time span: " + std::to_string(time_span) + " seconds");
+            writeLog("Points per source: 159=" + std::to_string(msg_159_->point_num) + 
+                    ", 160=" + std::to_string(msg_160_->point_num) + 
+                    ", 161=" + std::to_string(msg_161_->point_num));
             
             // 重置标志位和缓存
             has_159_data_ = false;

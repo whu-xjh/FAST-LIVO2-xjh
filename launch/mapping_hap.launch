@@ -6,11 +6,6 @@
 
 	<rosparam command="load" file="$(find fast_livo)/config/hap.yaml" />
 
-	<!-- Node with optional gdb debugging -->
-	<node if="$(arg debug)" pkg="fast_livo" type="fastlivo_mapping" name="laserMapping" output="screen" launch-prefix="gdb -ex run --args">
-		<rosparam file="$(find fast_livo)/config/camera_pinhole.yaml" />
-	</node>
-	
 	<!-- Normal node without debugging -->
 	<node unless="$(arg debug)" pkg="fast_livo" type="fastlivo_mapping" name="laserMapping" output="screen">
 		<rosparam file="$(find fast_livo)/config/camera_pinhole.yaml" />

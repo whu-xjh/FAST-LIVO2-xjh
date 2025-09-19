@@ -55,11 +55,12 @@ lio:
   max_layer: 2
   max_points_num: 20
   layer_init_num: [5, 5, 5, 5, 5]
+  sigma_num: 3
 
 local_map:  
-  map_sliding_en: true
-  half_map_size: 50
-  sliding_thresh: 10
+  map_sliding_en: false
+  half_map_size: 100
+  sliding_thresh: 20
 
 uav:
   imu_rate_odom: false
@@ -76,12 +77,17 @@ evo:
   seq_name: "CBD_Building_01"
   pose_output_en: false
 
+odom:
+  use_odom: true
+  odom_speed_tolerance: 0.1
+
+  
 lidar_save:
-  save_en: true
+  save_en: false
   effect_save_en: true
   laz_save_en: true
   colmap_output_en: false # need to set interval = -1
   filter_size_pcd: 0.15
-  interval: 1
+  interval: 10
   # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.

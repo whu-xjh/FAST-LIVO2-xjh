@@ -64,6 +64,7 @@ typedef struct PointToPlane
   double eigen_value_;
   bool is_valid_;
   float dis_to_plane_;
+  float intensity_;            // point intensity value
 } PointToPlane;
 
 typedef struct VoxelPlane

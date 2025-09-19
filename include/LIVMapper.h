@@ -70,6 +70,7 @@ public:
   void livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg_in);
   void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in);
   void img_cbk(const sensor_msgs::ImageConstPtr &msg_in);
+  void odom_cbk(const nav_msgs::Odometry::ConstPtr &msg_in);
   void publish_img_rgb(const image_transport::Publisher &pubImage, VIOManagerPtr vio_manager);
   void publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, VIOManagerPtr vio_manager = nullptr);
   void save_frame_world(const std::vector<PointToPlane> &ptpl_list);
@@ -93,7 +94,7 @@ public:
   
   string root_dir;
   string lid_topic, imu_topic, seq_name, img_topic;
-  V3D extT;
+    V3D extT;
   M3D extR;
 
   int feats_down_size = 0, max_iterations = 0;
@@ -180,6 +181,12 @@ public:
   geometry_msgs::Quaternion geoQuat;
   geometry_msgs::PoseStamped msg_body_pose;
 
+  // Odom subscriber related variables
+  nav_msgs::Odometry::Ptr newest_pos;
+  vector<nav_msgs::Odometry::Ptr> odom_buffer;
+  bool use_odom;
+  double odom_speed_tolerance;
+
   PreprocessPtr p_pre;
   ImuProcessPtr p_imu;
   VoxelMapManagerPtr voxelmap_manager;
@@ -202,6 +209,7 @@ public:
   ros::Publisher pubLaserCloudDynDbg;
   image_transport::Publisher pubImage;
   ros::Publisher mavros_pose_publisher;
+  ros::Subscriber sub_odom;
   ros::Timer imu_prop_timer;
 
   int frame_num = 0;
@@ -219,5 +227,6 @@ public:
   std::mutex laz_queue_mutex_;
   std::condition_variable laz_queue_cv_;
   std::atomic<bool> laz_stop_thread_{false};
-};
+  
+  };
 #endif

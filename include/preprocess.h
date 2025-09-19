@@ -169,6 +169,11 @@ public:
   bool feature_enabled, given_offset_time;
   ros::Publisher pub_full, pub_surf, pub_corn;
 
+  // ODOM offset variables
+  double odom_x_offset = 0.0;
+  double odom_y_offset = 0.0;
+  double odom_z_offset = 0.0;
+
 private:
   void avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg);
   void oust64_handler(const sensor_msgs::PointCloud2::ConstPtr &msg);

@@ -1,7 +1,7 @@
 common:
   img_topic: "/left_camera/image"
   lid_topic: "/livox/multi_lidar"  # 使用合并后的LiDAR话题
-  imu_topic: "/livox/imu_192_168_1_159"  # 使用159的IMU
+  imu_topic: "/livox/imu_192_168_1_159"  # 默认使用159的IMU
   img_en: 0
   lidar_en: 1
   ros_driver_bug_fix: false
@@ -21,7 +21,7 @@ time_offset:
 
 preprocess:
   point_filter_num: 1
-  filter_size_surf: 0.2
+  filter_size_surf: 0.5
   lidar_type: 1 # Livox Avia LiDAR
   scan_line: 6 # Avia: 6, Mid360: 4
   blind: 0.8
@@ -39,10 +39,11 @@ vio:
   exposure_estimate_en: true
   inv_expo_cov: 0.1
 
+
 # imu参数
 imu:
   imu_en: true
-  imu_int_frame: 100
+  imu_int_frame: 50
   acc_cov: 0.1 # 0.2
   gyr_cov: 0.1 # 0.5
   b_acc_cov: 0.0001 # 0.1
@@ -50,18 +51,18 @@ imu:
 
 # 激光雷达里程计
 lio:
-  max_iterations: 5
+  max_iterations: 10
   dept_err: 0.02
   beam_err: 0.05
   min_eigen_value: 0.0025 # 0.005
   voxel_size: 0.5
-  max_layer: 2
-  max_points_num: 50
+  max_layer: 4
+  max_points_num: 20
   layer_init_num: [5, 5, 5, 5, 5]
 
 local_map:  
   map_sliding_en: true
-  half_map_size: 50
+  half_map_size: 500
   sliding_thresh: 10
 
 uav:
@@ -69,8 +70,8 @@ uav:
   gravity_align_en: true
 
 publish:
-  dense_map_en: true
-  pub_effect_point_en: false
+  dense_map_en: false
+  pub_effect_point_en: true
   pub_plane_en: false
   pub_scan_num: 1
   blind_rgb_points: 0.0
@@ -78,11 +79,17 @@ publish:
 evo:
   seq_name: "CBD_Building_01"
   pose_output_en: false
-    
-pcd_save:
+
+odom:
+  use_odom: false
+  odom_speed_tolerance: 0.1
+
+lidar_save:
   save_en: false
+  effect_save_en: true
+  laz_save_en: true
   colmap_output_en: false # need to set interval = -1
   filter_size_pcd: 0.15
-  interval: 1
+  interval: 10
   # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
