@@ -182,12 +182,14 @@ public:
   geometry_msgs::PoseStamped msg_body_pose;
 
   // Odom subscriber related variables
-  nav_msgs::Odometry::Ptr newest_pos;
-  nav_msgs::Odometry::Ptr first_pos;
-  bool odom_init = false;
+  nav_msgs::Odometry::Ptr newest_odom;
+  nav_msgs::Odometry::Ptr first_odom;
   vector<nav_msgs::Odometry::Ptr> odom_buffer;
+  bool odom_init = false;
   bool use_odom;
   double odom_speed_tolerance;
+  Eigen::Quaterniond Q0;
+  Eigen::Vector3d P0;
 
   PreprocessPtr p_pre;
   ImuProcessPtr p_imu;
