@@ -15,12 +15,12 @@ extrin_calib:
   Pcl: [0.0194384, 0.104689,-0.0251952]
 
 time_offset: 
-  imu_time_offset: 0.0
+  imu_time_offset: 0.1
   img_time_offset: 0.1
   exposure_time_init: 0.0
 
 preprocess:
-  point_filter_num: 1
+  point_filter_num: 2
   filter_size_surf: 0.5
   lidar_type: 1 # Livox Avia LiDAR
   scan_line: 6 # Avia: 6, Mid360: 4
@@ -39,8 +39,7 @@ vio:
   exposure_estimate_en: true
   inv_expo_cov: 0.1
 
-
-# imu参数
+# imu参数      
 imu:
   imu_en: true
   imu_int_frame: 50
@@ -63,11 +62,11 @@ lio:
 local_map:  
   map_sliding_en: true
   half_map_size: 500
-  sliding_thresh: 10
+  sliding_thresh: 20
 
 uav:
   imu_rate_odom: false
-  gravity_align_en: true
+  gravity_align_en: false
 
 publish:
   dense_map_en: false
@@ -81,15 +80,15 @@ evo:
   pose_output_en: false
 
 odom:
-  use_odom: false
+  use_odom: true
   odom_speed_tolerance: 0.1
 
 lidar_save:
   save_en: false
-  effect_save_en: true
+  effect_save_en: false
   laz_save_en: true
   colmap_output_en: false # need to set interval = -1
   filter_size_pcd: 0.15
-  interval: 10
+  interval: 1
   # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.

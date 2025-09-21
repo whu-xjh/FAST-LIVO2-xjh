@@ -400,7 +400,80 @@ void LIVMapper::handleVIO()
 
 // 执行激光-惯性里程计（LIO）处理
 void LIVMapper::handleLIO() 
-{    
+{ 
+  if(use_odom && newest_pos && odom_init){
+    double time_diff = last_timestamp_lidar - newest_pos->header.stamp.toSec();
+    int index_diff = abs(int(time_diff / 0.02) - 1);
+    ROS_INFO("[ ODOM ] Odom buffer size: %lu\n", odom_buffer.size());
+    ROS_INFO("[ ODOM ] point cloud time diff to odom: %.6f, index diff: %d\n", time_diff, index_diff);
+
+    Eigen::Quaterniond Q0 = Eigen::Quaterniond(first_pos->pose.pose.orientation.w,
+                                           first_pos->pose.pose.orientation.x,
+                                           first_pos->pose.pose.orientation.y,
+                                           first_pos->pose.pose.orientation.z);
+
+    // 检查odom_buffer是否有足够的数据进行插值
+    if (odom_buffer.empty() || abs(index_diff) >= static_cast<int>(odom_buffer.size())){
+      ROS_INFO("[ ODOM ] Using newest odom data for compensation\n");
+      // 使用最新的odom数据进行运动补偿
+      Eigen::Quaterniond Q1 = Eigen::Quaterniond(newest_pos->pose.pose.orientation.w,
+                                           newest_pos->pose.pose.orientation.x,
+                                           newest_pos->pose.pose.orientation.y,
+                                           newest_pos->pose.pose.orientation.z);
+      Eigen::Vector3d V1 = Eigen::Vector3d(newest_pos->twist.twist.linear.x,
+                                           newest_pos->twist.twist.linear.y,
+                                           newest_pos->twist.twist.linear.z);
+      Eigen::Vector3d P1 = Eigen::Vector3d(newest_pos->pose.pose.position.x,
+                                           newest_pos->pose.pose.position.y,
+                                           newest_pos->pose.pose.position.z);
+
+      Eigen::Quaterniond Q1_0 = Q1 * Q0.inverse();
+      Eigen::Vector3d V0 = (Q1_0.toRotationMatrix()).transpose() * V1; // 转换到初始坐标系下的速度
+      Eigen::Vector3d P0 = (Q1_0.toRotationMatrix()).transpose() * P1; // 转换到初始坐标系下的位置
+      
+      // 添加中心偏移
+      _state.pos_end(0) += -time_diff * V0(0);
+      _state.pos_end(1) += -time_diff * V0(1);
+      _state.pos_end(2) += -time_diff * V0(2);
+    }
+    else{
+      ROS_INFO("[ ODOM ] Using buffer odom data for compensation\n");
+      // 确保索引在有效范围内
+      int buffer_index = odom_buffer.size() - 1 - index_diff;
+      time_diff = last_timestamp_lidar - odom_buffer[buffer_index]->header.stamp.toSec();
+      if (buffer_index >= 0 && buffer_index < static_cast<int>(odom_buffer.size())){
+        Eigen::Quaterniond Q1 = Eigen::Quaterniond(odom_buffer[buffer_index]->pose.pose.orientation.w,
+                                           odom_buffer[buffer_index]->pose.pose.orientation.x,
+                                           odom_buffer[buffer_index]->pose.pose.orientation.y,
+                                           odom_buffer[buffer_index]->pose.pose.orientation.z);
+        Eigen::Vector3d V1 = Eigen::Vector3d(odom_buffer[buffer_index]->twist.twist.linear.x,
+                                            odom_buffer[buffer_index]->twist.twist.linear.y,
+                                            odom_buffer[buffer_index]->twist.twist.linear.z);
+        Eigen::Quaterniond Q1_0 = Q1 * Q0.inverse();
+        Eigen::Vector3d V0 = (Q1_0.toRotationMatrix()).transpose() * V1; // 转换到初始坐标系下的速度
+
+        // 添加中心偏移
+        _state.pos_end(0) += -time_diff * V0(0);
+        _state.pos_end(1) += -time_diff * V0(1);
+        _state.pos_end(2) += -time_diff * V0(2);
+      }
+    }
+
+    // 删除过时的odom数据 - 修复erase用法
+    if (!odom_buffer.empty()) {
+      int erase_end_index = odom_buffer.size() - 2 + index_diff;
+      // 确保索引在有效范围内
+      if (erase_end_index > 0 && erase_end_index <= static_cast<int>(odom_buffer.size())) {
+        // 将索引转换为迭代器
+        auto erase_end_it = odom_buffer.begin() + erase_end_index;
+        odom_buffer.erase(odom_buffer.begin(), erase_end_it);
+      }
+    }
+  }
+  else{
+    // Continue without ODOM compensation
+  }
+
   // 记录当前状态的欧拉角表示，并将相关信息写入调试文件
   euler_cur = RotMtoEuler(_state.rot_end); // 将当前旋转矩阵转换为欧拉角
   fout_pre << setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
@@ -906,6 +979,12 @@ void LIVMapper::livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg_i
     // imu_time_offset = timediff_imu_wrt_lidar;
   }
 
+  if(newest_pos && odom_init == false){
+    first_pos = newest_pos;
+    odom_init = true;
+    printf("FIRST ODOM!\n");
+  }
+
   double cur_head_time = msg->header.stamp.toSec();
   ROS_INFO("Get LiDAR, its header time: %.6f", cur_head_time);
   if (cur_head_time < last_timestamp_lidar)
@@ -914,55 +993,6 @@ void LIVMapper::livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg_i
     lid_raw_data_buffer.clear();
   }
   // ROS_INFO("get point cloud at time: %.6f", msg->header.stamp.toSec());
-
-  if(use_odom && newest_pos){
-    double time_diff = msg_in->header.stamp.toSec() - newest_pos->header.stamp.toSec();
-    int index_diff = int(time_diff / 0.02) - 1;
-    printf("point cloud time diff to odom: %.6f, index diff: %d\n", time_diff, index_diff);
-
-    // 检查odom_buffer是否有足够的数据进行插值
-    if (odom_buffer.empty() || abs(index_diff) >= static_cast<int>(odom_buffer.size())){
-      // 使用最新的odom数据进行运动补偿
-      for (int i=0; i<msg->point_num; i++){
-        msg->points[i].x += time_diff * newest_pos->twist.twist.linear.x;
-        msg->points[i].y += time_diff * newest_pos->twist.twist.linear.y;
-        msg->points[i].z += time_diff * newest_pos->twist.twist.linear.z;
-      }
-    }
-    else{
-      // 确保索引在有效范围内
-      int buffer_index = odom_buffer.size() - 1 + index_diff;
-      if (buffer_index >= 0 && buffer_index < static_cast<int>(odom_buffer.size())){
-        for (int i=0; i<msg->point_num; i++){
-          msg->points[i].x += time_diff * odom_buffer[buffer_index]->twist.twist.linear.x;
-          msg->points[i].y += time_diff * odom_buffer[buffer_index]->twist.twist.linear.y;
-          msg->points[i].z += time_diff * odom_buffer[buffer_index]->twist.twist.linear.z;
-        }
-      }
-      else{
-        // 索引超出范围，使用最新的odom数据
-        for (int i=0; i<msg->point_num; i++){
-          msg->points[i].x += time_diff * newest_pos->twist.twist.linear.x;
-          msg->points[i].y += time_diff * newest_pos->twist.twist.linear.y;
-          msg->points[i].z += time_diff * newest_pos->twist.twist.linear.z;
-        }
-      }
-    }
-
-    // 删除过时的odom数据 - 修复erase用法
-    if (!odom_buffer.empty()) {
-      int erase_end_index = odom_buffer.size() - 2 + index_diff;
-      // 确保索引在有效范围内
-      if (erase_end_index > 0 && erase_end_index <= static_cast<int>(odom_buffer.size())) {
-        // 将索引转换为迭代器
-        auto erase_end_it = odom_buffer.begin() + erase_end_index;
-        odom_buffer.erase(odom_buffer.begin(), erase_end_it);
-      }
-    }
-  }
-  else{
-    // Continue without ODOM compensation
-  }
 
   PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
   p_pre->process(msg, ptr);
@@ -1039,6 +1069,7 @@ void LIVMapper::odom_cbk(const nav_msgs::Odometry::ConstPtr &msg_in)
   nav_msgs::Odometry::Ptr new_odom_msg(new nav_msgs::Odometry(*msg_in));
   odom_buffer.push_back(new_odom_msg);
   newest_pos = new_odom_msg;
+  // ROS_INFO("Get ODOM, its header time: %.6f", new_odom_msg->header.stamp.toSec());
 }
 
 cv::Mat LIVMapper::getImageFromMsg(const sensor_msgs::ImageConstPtr &img_msg)

@@ -183,6 +183,8 @@ public:
 
   // Odom subscriber related variables
   nav_msgs::Odometry::Ptr newest_pos;
+  nav_msgs::Odometry::Ptr first_pos;
+  bool odom_init = false;
   vector<nav_msgs::Odometry::Ptr> odom_buffer;
   bool use_odom;
   double odom_speed_tolerance;

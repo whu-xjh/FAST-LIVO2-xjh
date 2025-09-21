@@ -21,7 +21,7 @@ time_offset:
 
 preprocess:
   point_filter_num: 1
-  filter_size_surf: 0.2
+  filter_size_surf: 0.5
   lidar_type: 1 # Livox Avia LiDAR
   scan_line: 6
   blind: 0.8
@@ -52,14 +52,13 @@ lio:
   beam_err: 0.05
   min_eigen_value: 0.0025 # 0.005
   voxel_size: 0.5
-  max_layer: 2
-  max_points_num: 20
+  max_layer: 4
+  max_points_num: 50
   layer_init_num: [5, 5, 5, 5, 5]
-  sigma_num: 3
 
 local_map:  
-  map_sliding_en: false
-  half_map_size: 100
+  map_sliding_en: true
+  half_map_size: 500
   sliding_thresh: 20
 
 uav:
@@ -78,10 +77,9 @@ evo:
   pose_output_en: false
 
 odom:
-  use_odom: true
+  use_odom: false
   odom_speed_tolerance: 0.1
 
-  
 lidar_save:
   save_en: false
   effect_save_en: true
