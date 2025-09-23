@@ -599,6 +599,55 @@ void VoxelMapManager::TransformLidar(const Eigen::Matrix3d rot, const Eigen::Vec
   }
 }
 
+void VoxelMapManager::UpdateGroundFlagForColumn(const VOXEL_COLUMN_LOCATION &column_key,
+                                                std::map<int64_t, VoxelOctoTree *> &column_voxels)
+{
+  for (auto &voxel_pair : column_voxels)
+  {
+    voxel_pair.second->is_ground_voxel_ = false;
+  }
+  if (!column_voxels.empty())
+  {
+    column_voxels.begin()->second->is_ground_voxel_ = true;
+  }
+}
+
+void VoxelMapManager::RegisterVoxelToColumn(const VOXEL_LOCATION &position, VoxelOctoTree *voxel)
+{
+  if (voxel == nullptr)
+  {
+    return;
+  }
+  VOXEL_COLUMN_LOCATION column_key(position.x, position.y);
+  auto &column_voxels = column_voxels_[column_key];
+  column_voxels[position.z] = voxel;
+  UpdateGroundFlagForColumn(column_key, column_voxels);
+}
+
+void VoxelMapManager::UnregisterVoxelFromColumn(const VOXEL_LOCATION &position)
+{
+  VOXEL_COLUMN_LOCATION column_key(position.x, position.y);
+  auto column_iter = column_voxels_.find(column_key);
+  if (column_iter == column_voxels_.end())
+  {
+    return;
+  }
+  auto &column_voxels = column_iter->second;
+  auto voxel_iter = column_voxels.find(position.z);
+  if (voxel_iter != column_voxels.end())
+  {
+    column_voxels.erase(voxel_iter);
+  }
+  if (column_voxels.empty())
+  {
+    column_voxels_.erase(column_iter);
+  }
+  else
+  {
+    UpdateGroundFlagForColumn(column_key, column_voxels);
+  }
+}
+
 // 仅在系统首次运行时执行，用于构建初始体素地图，为后续ICP配准提供参考
 void VoxelMapManager::BuildVoxelMap()
 {
@@ -662,6 +711,7 @@ void VoxelMapManager::BuildVoxelMap()
       voxel_map_[position]->temp_points_.push_back(p_v);
       voxel_map_[position]->new_points_++;
       voxel_map_[position]->layer_init_num_ = layer_init_num;
+      RegisterVoxelToColumn(position, voxel_map_[position]);
     }
   }
 
@@ -719,6 +769,7 @@ void VoxelMapManager::UpdateVoxelMap(const std::vector<pointWithVar> &input_poin
       voxel_map_[position]->voxel_center_[1] = (0.5 + position.y) * voxel_size;
       voxel_map_[position]->voxel_center_[2] = (0.5 + position.z) * voxel_size;
       voxel_map_[position]->UpdateOctoTree(p_v);
+      RegisterVoxelToColumn(position, voxel_map_[position]);
     }
   }
 }
@@ -736,6 +787,7 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
   std::vector<PointToPlane> all_ptpl_list(pv_list.size()); // 存储所有点面的对应关系
   std::vector<bool> useful_ptpl(pv_list.size()); // 标记每个点是否找到有效的平面
   std::vector<size_t> index(pv_list.size()); // 索引数组,用于多线程处理
+  std::vector<bool> is_ground_point(pv_list.size(), false); // 标记点是否属于地面体素
 
   // 初始化索引和标记数组
   for (size_t i = 0; i < index.size(); ++i)
@@ -769,6 +821,7 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
     if (iter != voxel_map_.end()) // 如果找到体素
     {
       VoxelOctoTree *current_octo = iter->second; // 获取体素对应的八叉树节点
+      is_ground_point[i] = current_octo->is_ground_voxel_;
       PointToPlane single_ptpl{}; // 存储当前点对应的平面信息
       bool is_sucess = false; // 标记是否成功找到平面
       double prob = 0; // 存储点到平面的概率值
@@ -832,6 +885,7 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
     if (useful_ptpl[i]) {
       ptpl_list.push_back(all_ptpl_list[i]);
     } else {
+      if (is_ground_point[i]) { continue; }
       // 将无效点也保存起来
       PointToPlane bad_ptpl = all_ptpl_list[i];
       bad_ptpl.point_w_ = pv_list[i].point_w;
@@ -1093,7 +1147,10 @@ void VoxelMapManager::clearMemOutOfMap(const int& x_max,const int& x_min,const i
     bool should_remove = loc.x > x_max || loc.x < x_min || loc.y > y_max || loc.y < y_min || loc.z > z_max || loc.z < z_min;
     if (should_remove){
       // last_delete_time = omp_get_wtime();
-      delete it->second;
+      VOXEL_LOCATION remove_loc = loc;
+      VoxelOctoTree *voxel_ptr = it->second;
+      UnregisterVoxelFromColumn(remove_loc);
+      delete voxel_ptr;
       it = voxel_map_.erase(it);
       // delete_time += omp_get_wtime() - last_delete_time;
       delete_voxel_cout++;
