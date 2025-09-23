@@ -36,6 +36,7 @@ LIVMapper::LIVMapper(ros::NodeHandle &nh)
   p_imu.reset(new ImuProcess());
   
   readParameters(nh);
+
   VoxelMapConfig voxel_config;
   loadVoxelConfig(nh, voxel_config);
 
@@ -73,7 +74,7 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
 {
   nh.param<string>("common/lid_topic", lid_topic, "/livox/lidar");
   nh.param<string>("common/imu_topic", imu_topic, "/livox/imu");
-    nh.param<bool>("common/ros_driver_bug_fix", ros_driver_fix_en, false);
+  nh.param<bool>("common/ros_driver_bug_fix", ros_driver_fix_en, false);
   nh.param<int>("common/img_en", img_en, 1);
   nh.param<int>("common/lidar_en", lidar_en, 1);
   nh.param<string>("common/img_topic", img_topic, "/left_camera/image");
@@ -97,11 +98,6 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<double>("time_offset/lidar_time_offset", lidar_time_offset, 0.0);
   nh.param<bool>("uav/imu_rate_odom", imu_prop_enable, false);
   nh.param<bool>("uav/gravity_align_en", gravity_align_en, false);
-
-  // ODOM parameters
-  nh.param<bool>("odom/use_odom", use_odom, true);
-  nh.param<double>("odom/odom_speed_tolerance", odom_speed_tolerance, 0.1);
-
 
   nh.param<string>("evo/seq_name", seq_name, "01");
   nh.param<bool>("evo/pose_output_en", pose_output_en, false);
@@ -140,6 +136,7 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<bool>("publish/pub_effect_point_en", pub_effect_point_en, false);
   nh.param<bool>("publish/dense_map_en", dense_map_en, false);
 
+  
   p_pre->blind_sqr = p_pre->blind * p_pre->blind;
 }
 
@@ -173,6 +170,7 @@ void LIVMapper::initializeComponents()
   vio_manager->colmap_output_en = colmap_output_en;
   vio_manager->initializeVIO();
 
+  
   p_imu->set_extrinsic(extT, extR);
   p_imu->set_gyr_cov_scale(V3D(gyr_cov, gyr_cov, gyr_cov));
   p_imu->set_acc_cov_scale(V3D(acc_cov, acc_cov, acc_cov));
@@ -211,7 +209,7 @@ void LIVMapper::initializeFiles()
     }
     printf("ROOT_DIR: %s, pcd_session_dir_: %s\n", root_dir.c_str(), pcd_session_dir_.c_str());
   }
-  
+
   if (save_en && colmap_output_en)
   {
       const std::string folderPath = std::string(ROOT_DIR) + "/scripts/colmap_output.sh";
@@ -236,21 +234,22 @@ void LIVMapper::initializeFiles()
   fout_out.open(DEBUG_FILE_DIR("mat_out.txt"), std::ios::out);
 }
 
+
 void LIVMapper::initializeSubscribersAndPublishers(ros::NodeHandle &nh, image_transport::ImageTransport &it) 
 {
   sub_pcl = p_pre->lidar_type == AVIA ?
             nh.subscribe(lid_topic, 200000, &LIVMapper::livox_pcl_cbk, this):
             nh.subscribe(lid_topic, 200000, &LIVMapper::standard_pcl_cbk, this);
-  ROS_INFO("Using IMU from topic: %s", imu_topic.c_str());
   sub_imu = nh.subscribe(imu_topic, 200000, &LIVMapper::imu_cbk, this);
   sub_img = nh.subscribe(img_topic, 200000, &LIVMapper::img_cbk, this);
-  ROS_INFO("Using ODOM from topic: /novatel/oem7/odom");
-  sub_odom = nh.subscribe("/novatel/oem7/odom", 200000, &LIVMapper::odom_cbk, this);
-  
+
+    
   pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100);
+  pubLaserCloudBody = nh.advertise<sensor_msgs::PointCloud2>("/cloud_body", 100);
   pubNormal = nh.advertise<visualization_msgs::MarkerArray>("visualization_marker", 100);
   pubSubVisualMap = nh.advertise<sensor_msgs::PointCloud2>("/cloud_visual_sub_map_before", 100);
   pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>("/cloud_effected", 100);
+  pubLaserCloudIneffective = nh.advertise<sensor_msgs::PointCloud2>("/cloud_ineffective", 100);
   pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("/Laser_map", 100);
   pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/aft_mapped_to_init", 10);
   pubPath = nh.advertise<nav_msgs::Path>("/path", 10);
@@ -260,7 +259,6 @@ void LIVMapper::initializeSubscribersAndPublishers(ros::NodeHandle &nh, image_tr
   pubImage = it.advertise("/rgb_img", 1);
   pubImuPropOdom = nh.advertise<nav_msgs::Odometry>("/LIVO2/imu_propagate", 10000);
   
-  // Dynamic detection publishers
   imu_prop_timer = nh.createTimer(ros::Duration(0.004), &LIVMapper::imu_prop_callback, this);
   voxelmap_manager->voxel_map_pub_= nh.advertise<visualization_msgs::MarkerArray>("/planes", 10000);
 }
@@ -401,55 +399,6 @@ void LIVMapper::handleVIO()
 // 执行激光-惯性里程计（LIO）处理
 void LIVMapper::handleLIO() 
 { 
-  if(odom_buffer.size() > 0){
-    // 找到时间戳最接近当前激光帧的里程计数据作为初始位姿
-    double min_time_diff = std::numeric_limits<double>::max();
-    nav_msgs::Odometry::Ptr closest_odom;
-    for (const auto& odom_msg : odom_buffer) {
-      double time_diff = odom_msg->header.stamp.toSec() - last_timestamp_lidar;
-      if (abs(time_diff) < abs(min_time_diff)) {
-        min_time_diff = time_diff;
-        closest_odom = odom_msg;
-      }
-    }
-
-    if (odom_init == false){
-      first_odom = closest_odom;
-      printf("[ ODOM ] Get FIRST ODOM!, its header time: %.6f", first_odom->header.stamp.toSec());
-      Q0 = Eigen::Quaterniond(first_odom->pose.pose.orientation.w,
-                              first_odom->pose.pose.orientation.x,
-                              first_odom->pose.pose.orientation.y,
-                              first_odom->pose.pose.orientation.z);
-      P0 = Eigen::Vector3d(first_odom->pose.pose.position.x,
-                           first_odom->pose.pose.position.y,
-                           first_odom->pose.pose.position.z);
-      odom_init = true;
-    }
-
-    Eigen::Quaterniond Q1 = Eigen::Quaterniond(closest_odom->pose.pose.orientation.w,
-                                           closest_odom->pose.pose.orientation.x,
-                                           closest_odom->pose.pose.orientation.y,
-                                           closest_odom->pose.pose.orientation.z);
-    Eigen::Vector3d V1 = Eigen::Vector3d(closest_odom->twist.twist.linear.x,
-                                        closest_odom->twist.twist.linear.y,
-                                        closest_odom->twist.twist.linear.z);
-    Eigen::Vector3d P1 = Eigen::Vector3d(closest_odom->pose.pose.position.x,
-                                          closest_odom->pose.pose.position.y,
-                                          closest_odom->pose.pose.position.z);
-
-    Eigen::Quaterniond Q1_0 = Q1 * Q0.inverse();
-    Eigen::Matrix3d R1_0 = Q1_0.toRotationMatrix();
-    Eigen::Vector3d V1_0 = R1_0.transpose() * V1;
-    Eigen::Vector3d P1_0 = R1_0.transpose() * (P1 - P0);
-
-    _state.pos_end(0) += (P1_0(2) + min_time_diff * V1_0(2)) * -1;
-    _state.pos_end(1) += (P1_0(0) + min_time_diff * V1_0(0)) * +1;
-    _state.pos_end(2) += (P1_0(1) + min_time_diff * V1_0(1)) * -1;
-
-    printf("[ ODOM ] Odom buffer size: %lu\n", odom_buffer.size());
-    printf("[ ODOM ] point cloud time diff to odom: %.6f", min_time_diff);
-  }
-
   // 记录当前状态的欧拉角表示，并将相关信息写入调试文件
   euler_cur = RotMtoEuler(_state.rot_end); // 将当前旋转矩阵转换为欧拉角
   fout_pre << setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
@@ -637,12 +586,17 @@ void LIVMapper::handleLIO()
   double t6 = omp_get_wtime();
 
   if (!img_en) publish_frame_world(pubLaserCloudFullRes, vio_manager); // 如果没有图像信息，发布点云
-  if (pub_effect_point_en) publish_effect_world(pubLaserCloudEffect, voxelmap_manager->ptpl_list_); // 发布有效点云
+  publish_frame_body(pubLaserCloudBody); // 发布机身坐标系下的点云
+  if (pub_effect_point_en) {
+    publish_effect_world(pubLaserCloudEffect, voxelmap_manager->ptpl_list_); // 发布有效点云
+    publish_ineffective_world(pubLaserCloudIneffective, voxelmap_manager->ptpl_bad_list_); // 发布无效点云
+  }
   if (voxelmap_manager->config_setting_.is_pub_plane_map_) voxelmap_manager->pubVoxelMap(); // 发布体素地图
   if (save_en) save_frame_world(voxelmap_manager->ptpl_list_); // 保存点云到文件
   publish_path(pubPath); // 发布路径
   publish_mavros(mavros_pose_publisher); // 发布MAVROS位姿
 
+  
   frame_num++;
   double t7 = omp_get_wtime();
   aver_time_consu = aver_time_consu * (frame_num - 1) / frame_num + (t7 - t0) / frame_num;
@@ -985,6 +939,7 @@ void LIVMapper::imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
 {
   if (!imu_en) return;
 
+  
   if (last_timestamp_lidar < 0.0) return;
   // ROS_INFO("get imu at time: %.6f", msg_in->header.stamp.toSec());
   sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
@@ -1032,14 +987,6 @@ void LIVMapper::imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
     mtx_buffer_imu_prop.unlock();
   }
   sig_buffer.notify_all();
-}
-
-void LIVMapper::odom_cbk(const nav_msgs::Odometry::ConstPtr &msg_in)
-{
-  nav_msgs::Odometry::Ptr new_odom_msg(new nav_msgs::Odometry(*msg_in));
-  odom_buffer.push_back(new_odom_msg);
-  newest_odom = new_odom_msg;
-  // ROS_INFO("Get ODOM, its header time: %.6f", new_odom_msg->header.stamp.toSec());
 }
 
 cv::Mat LIVMapper::getImageFromMsg(const sensor_msgs::ImageConstPtr &img_msg)
@@ -1409,8 +1356,8 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
     // Use the populated RGB cloud for publishing
     pcl::toROSMsg(*laserCloudWorldRGB_shared, laserCloudmsg);
   }
-  else 
-  { 
+  else
+  {
     pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg);
   }
   laserCloudmsg.header.stamp = ros::Time::now(); //.fromSec(last_timestamp_lidar);
@@ -1419,9 +1366,20 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
 
   if(!save_en)
   {
-    if(laserCloudWorldRGB_shared->size() > 0)  PointCloudXYZI().swap(*pcl_wait_pub); 
+    if(laserCloudWorldRGB_shared->size() > 0)  PointCloudXYZI().swap(*pcl_wait_pub);
     PointCloudXYZI().swap(*pcl_w_wait_pub);
   }
+}
+
+void LIVMapper::publish_frame_body(const ros::Publisher &pubLaserCloudBody)
+{
+  if (feats_undistort->empty()) return;
+
+  sensor_msgs::PointCloud2 laserCloudBodyMsg;
+  pcl::toROSMsg(*feats_undistort, laserCloudBodyMsg);
+  laserCloudBodyMsg.header.stamp = ros::Time::now();
+  laserCloudBodyMsg.header.frame_id = "body";
+  pubLaserCloudBody.publish(laserCloudBodyMsg);
 }
 
 void LIVMapper::save_frame_world_RGB(PointCloudXYZRGB::Ptr &laserCloudWorldRGB)
@@ -1575,6 +1533,32 @@ void LIVMapper::publish_effect_world(const ros::Publisher &pubLaserCloudEffect, 
   pubLaserCloudEffect.publish(laserCloudFullRes3);
 }
 
+void LIVMapper::publish_ineffective_world(const ros::Publisher &pubLaserCloudIneffective, const std::vector<PointToPlane> &ineffective_points)
+{
+  if (ineffective_points.empty()) return;
+
+  // 创建无效点点云
+  PointCloudXYZI::Ptr ineffectiveCloud(new PointCloudXYZI());
+  ineffectiveCloud->reserve(ineffective_points.size());
+
+  // 直接从ptpl_bad_list_中提取无效点
+  for (const auto& pt : ineffective_points) {
+    PointType point;
+    point.x = pt.point_w_[0];
+    point.y = pt.point_w_[1];
+    point.z = pt.point_w_[2];
+    point.intensity = pt.intensity_;
+    ineffectiveCloud->points.push_back(point);
+  }
+
+  // 发布无效点云
+  sensor_msgs::PointCloud2 ineffectiveCloudMsg;
+  pcl::toROSMsg(*ineffectiveCloud, ineffectiveCloudMsg);
+  ineffectiveCloudMsg.header.stamp = ros::Time::now();
+  ineffectiveCloudMsg.header.frame_id = "camera_init";
+  pubLaserCloudIneffective.publish(ineffectiveCloudMsg);
+}
+
 template <typename T> void LIVMapper::set_posestamp(T &out)
 {
   out.position.x = _state.pos_end(0);
@@ -1590,7 +1574,8 @@ void LIVMapper::publish_odometry(const ros::Publisher &pubOdomAftMapped)
 {
   odomAftMapped.header.frame_id = "camera_init";
   odomAftMapped.child_frame_id = "aft_mapped";
-  odomAftMapped.header.stamp = ros::Time::now(); //.ros::Time()fromSec(last_timestamp_lidar);
+  odomAftMapped.header.stamp = ros::Time::now(); 
+  // odomAftMapped.header.stamp = ros::Time(last_timestamp_lidar);
   set_posestamp(odomAftMapped.pose.pose);
 
   static tf::TransformBroadcaster br;
@@ -1779,9 +1764,11 @@ void LIVMapper::queueLazSaveTask(const std::string& filename, std::function<void
     std::lock_guard<std::mutex> lock(laz_queue_mutex_);
     laz_save_queue_.emplace(filename, save_function);
   }
-  
+
   // Notify worker thread
   laz_queue_cv_.notify_one();
 
   std::cout << CYAN << "Queued LAZ save task: " << filename << " (queue size: " << laz_save_queue_.size() << ")" << RESET << std::endl;
 }
+
+

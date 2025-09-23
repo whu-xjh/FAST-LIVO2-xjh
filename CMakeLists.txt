@@ -99,6 +99,8 @@ find_package(OpenCV REQUIRED)
 find_package(Sophus REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
 
+
+
 # LAStools - set paths directly since we know they exist
 set(LASTOOLS_INCLUDE_DIR "/usr/local/include/LASlib")
 set(LASTOOLS_LIBRARY "/usr/local/lib/liblaszip.so.8")
@@ -127,6 +129,7 @@ include_directories(
   ${laszip_INCLUDE_DIR}
   include
 )
+
 
 # Add libraries
 add_library(vio src/vio.cpp src/frame.cpp src/visual_point.cpp)

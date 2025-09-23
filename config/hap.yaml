@@ -41,19 +41,19 @@ vio:
 imu:
   imu_en: true
   imu_int_frame: 100
-  acc_cov: 0.1 # 0.2
-  gyr_cov: 0.1 # 0.5
+  acc_cov: 0.5 # 0.2
+  gyr_cov: 0.3 # 0.5
   b_acc_cov: 0.0001 # 0.1
   b_gyr_cov: 0.0001 # 0.1
 
 lio:
-  max_iterations: 5
+  max_iterations: 10
   dept_err: 0.02
   beam_err: 0.05
   min_eigen_value: 0.0025 # 0.005
   voxel_size: 0.5
   max_layer: 4
-  max_points_num: 50
+  max_points_num: 20
   layer_init_num: [5, 5, 5, 5, 5]
 
 local_map:  
@@ -75,10 +75,6 @@ publish:
 evo:
   seq_name: "CBD_Building_01"
   pose_output_en: false
-
-odom:
-  use_odom: true
-  odom_speed_tolerance: 0.1
 
 lidar_save:
   save_en: false

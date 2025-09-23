@@ -75,8 +75,11 @@ public:
   void publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, VIOManagerPtr vio_manager = nullptr);
   void save_frame_world(const std::vector<PointToPlane> &ptpl_list);
   void save_frame_world_RGB(PointCloudXYZRGB::Ptr &laserCloudWorldRGB);
+  void publish_frame_body(const ros::Publisher &pubLaserCloudBody);
+
   void publish_visual_sub_map(const ros::Publisher &pubSubVisualMap);
-  void publish_effect_world(const ros::Publisher &pubLaserCloudEffect, const std::vector<PointToPlane> &ptpl_list);
+  void publish_effect_world(const ros::Publisher &pubLaserCloudEffect, const std::vector<PointToPlane> &ptpl_list); 
+  void publish_ineffective_world(const ros::Publisher &pubLaserCloudIneffective, const std::vector<PointToPlane> &ineffective_points);
   void publish_odometry(const ros::Publisher &pubOdomAftMapped);
   void publish_mavros(const ros::Publisher &mavros_pose_publisher);
   void publish_path(const ros::Publisher pubPath);
@@ -94,7 +97,7 @@ public:
   
   string root_dir;
   string lid_topic, imu_topic, seq_name, img_topic;
-    V3D extT;
+  V3D extT;
   M3D extR;
 
   int feats_down_size = 0, max_iterations = 0;
@@ -110,7 +113,8 @@ public:
 
   bool lidar_map_inited = false, save_en = false, pub_effect_point_en = false, pose_output_en = false, ros_driver_fix_en = false, hilti_en = false;
   bool laz_save_en = false, effect_save_en = false;
-  int save_interval = -1, pcd_index = 0, scan_wait_num = 0;
+
+    int save_interval = -1, pcd_index = 0, scan_wait_num = 0;
   int pub_scan_num = 1;
 
   StatesGroup imu_propagate, latest_ekf_state;
@@ -155,6 +159,7 @@ public:
   vector<double> cameraextrinR;
   double IMG_POINT_COV;
 
+
   PointCloudXYZI::Ptr visual_sub_map;
   PointCloudXYZI::Ptr feats_undistort;
   PointCloudXYZI::Ptr feats_down_body;
@@ -181,21 +186,12 @@ public:
   geometry_msgs::Quaternion geoQuat;
   geometry_msgs::PoseStamped msg_body_pose;
 
-  // Odom subscriber related variables
-  nav_msgs::Odometry::Ptr newest_odom;
-  nav_msgs::Odometry::Ptr first_odom;
-  vector<nav_msgs::Odometry::Ptr> odom_buffer;
-  bool odom_init = false;
-  bool use_odom;
-  double odom_speed_tolerance;
-  Eigen::Quaterniond Q0;
-  Eigen::Vector3d P0;
-
   PreprocessPtr p_pre;
   ImuProcessPtr p_imu;
   VoxelMapManagerPtr voxelmap_manager;
   VIOManagerPtr vio_manager;
 
+  
   ros::Publisher plane_pub;
   ros::Publisher voxel_pub;
   ros::Subscriber sub_pcl;
@@ -205,12 +201,14 @@ public:
   ros::Publisher pubNormal;
   ros::Publisher pubSubVisualMap;
   ros::Publisher pubLaserCloudEffect;
+  ros::Publisher pubLaserCloudIneffective;
   ros::Publisher pubLaserCloudMap;
   ros::Publisher pubOdomAftMapped;
   ros::Publisher pubPath;
   ros::Publisher pubLaserCloudDyn;
   ros::Publisher pubLaserCloudDynRmed;
   ros::Publisher pubLaserCloudDynDbg;
+  ros::Publisher pubLaserCloudBody;
   image_transport::Publisher pubImage;
   ros::Publisher mavros_pose_publisher;
   ros::Subscriber sub_odom;

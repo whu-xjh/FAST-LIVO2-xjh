@@ -3,7 +3,9 @@
     "allow": [
       "Bash(grep:*)",
       "Bash(find:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Read(//home/xjh/Doc/dufomap/build/**)",
+      "Read(//home/xjh/Doc/dufomap/**)"
     ],
     "deny": []
   }

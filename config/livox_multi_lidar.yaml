@@ -20,7 +20,7 @@ time_offset:
   exposure_time_init: 0.0
 
 preprocess:
-  point_filter_num: 2
+  point_filter_num: 1
   filter_size_surf: 0.5
   lidar_type: 1 # Livox Avia LiDAR
   scan_line: 6 # Avia: 6, Mid360: 4
@@ -42,9 +42,9 @@ vio:
 # imu参数      
 imu:
   imu_en: true
-  imu_int_frame: 50
-  acc_cov: 0.1 # 0.2
-  gyr_cov: 0.1 # 0.5
+  imu_int_frame: 30
+  acc_cov: 0.5 # 0.2
+  gyr_cov: 0.3 # 0.5
   b_acc_cov: 0.0001 # 0.1
   b_gyr_cov: 0.0001 # 0.1
 
@@ -55,8 +55,8 @@ lio:
   beam_err: 0.05
   min_eigen_value: 0.0025 # 0.005
   voxel_size: 0.5
-  max_layer: 4
-  max_points_num: 20
+  max_layer: 2
+  max_points_num: 50
   layer_init_num: [5, 5, 5, 5, 5]
 
 local_map:  
@@ -65,7 +65,7 @@ local_map:
   sliding_thresh: 20
 
 uav:
-  imu_rate_odom: false
+  imu_rate_odom: true
   gravity_align_en: false
 
 publish:
@@ -79,10 +79,6 @@ evo:
   seq_name: "CBD_Building_01"
   pose_output_en: false
 
-odom:
-  use_odom: true
-  odom_speed_tolerance: 0.1
-
 lidar_save:
   save_en: false
   effect_save_en: false
@@ -92,3 +88,4 @@ lidar_save:
   interval: 1
   # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+

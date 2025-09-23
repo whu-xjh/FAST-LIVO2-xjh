@@ -731,6 +731,7 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
   double sigma_num = config_setting_.sigma_num_; // 获取标准差倍数
   std::mutex mylock; // 线程锁,用于多线程同步,保护共享资源
   ptpl_list.clear();
+  ptpl_bad_list_.clear();
 
   std::vector<PointToPlane> all_ptpl_list(pv_list.size()); // 存储所有点面的对应关系
   std::vector<bool> useful_ptpl(pv_list.size()); // 标记每个点是否找到有效的平面
@@ -778,15 +779,37 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
       { 
         // 如果当前体素未找到有效平面,则检查相邻体素
         VOXEL_LOCATION near_position = position;
-        if (loc_xyz[0] > (current_octo->voxel_center_[0] + current_octo->quater_length_)) { near_position.x = near_position.x + 1; }
-        else if (loc_xyz[0] < (current_octo->voxel_center_[0] - current_octo->quater_length_)) { near_position.x = near_position.x - 1; }
-        if (loc_xyz[1] > (current_octo->voxel_center_[1] + current_octo->quater_length_)) { near_position.y = near_position.y + 1; }
-        else if (loc_xyz[1] < (current_octo->voxel_center_[1] - current_octo->quater_length_)) { near_position.y = near_position.y - 1; }
-        if (loc_xyz[2] > (current_octo->voxel_center_[2] + current_octo->quater_length_)) { near_position.z = near_position.z + 1; }
-        else if (loc_xyz[2] < (current_octo->voxel_center_[2] - current_octo->quater_length_)) { near_position.z = near_position.z - 1; }
+        if (loc_xyz[0] > (current_octo->voxel_center_[0] + current_octo->quater_length_)){ 
+          if(loc_xyz[0] > (current_octo->voxel_center_[0] + 2*current_octo->quater_length_)) near_position.x = near_position.x + 2; 
+          else near_position.x = near_position.x + 1; 
+        }
+        else if (loc_xyz[0] < (current_octo->voxel_center_[0] - current_octo->quater_length_)) { 
+          if (loc_xyz[0] < (current_octo->voxel_center_[0] - 2*current_octo->quater_length_)) near_position.x = near_position.x - 2; 
+          else near_position.x = near_position.x - 1; 
+        }
+
+        if (loc_xyz[1] > (current_octo->voxel_center_[1] + current_octo->quater_length_)) { 
+          if (loc_xyz[1] > (current_octo->voxel_center_[1] + 2*current_octo->quater_length_)) near_position.y = near_position.y + 2; 
+          else near_position.y = near_position.y + 1; 
+        }
+        else if (loc_xyz[1] < (current_octo->voxel_center_[1] - current_octo->quater_length_)) { 
+          if (loc_xyz[1] < (current_octo->voxel_center_[1] - 2*current_octo->quater_length_)) near_position.y = near_position.y - 2; 
+          else near_position.y = near_position.y - 1; 
+        }
+
+        if (loc_xyz[2] > (current_octo->voxel_center_[2] + current_octo->quater_length_)) { 
+          if (loc_xyz[2] > (current_octo->voxel_center_[2] + 2*current_octo->quater_length_)) near_position.z = near_position.z + 2; 
+          else near_position.z = near_position.z + 1; 
+        }
+        else if (loc_xyz[2] < (current_octo->voxel_center_[2] - current_octo->quater_length_)) { 
+          if (loc_xyz[2] < (current_octo->voxel_center_[2] - 2*current_octo->quater_length_)) near_position.z = near_position.z - 2; 
+          else near_position.z = near_position.z - 1; 
+        }
+
         // 在相邻体素中查找平面,如果找到则构建残差
         auto iter_near = voxel_map_.find(near_position);
         if (iter_near != voxel_map_.end()) { build_single_residual(pv, iter_near->second, 0, is_sucess, prob, single_ptpl); }
+        
       }
       if (is_sucess)
       { // 如果成功找到平面,则将点面对应关系存储到共享资源中
@@ -806,7 +829,18 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
   // 将所有有效的点面对应关系存储到最终的列表中
   for (size_t i = 0; i < useful_ptpl.size(); i++)
   {
-    if (useful_ptpl[i]) { ptpl_list.push_back(all_ptpl_list[i]); }
+    if (useful_ptpl[i]) {
+      ptpl_list.push_back(all_ptpl_list[i]);
+    } else {
+      // 将无效点也保存起来
+      PointToPlane bad_ptpl = all_ptpl_list[i];
+      bad_ptpl.point_w_ = pv_list[i].point_w;
+      bad_ptpl.point_b_ = pv_list[i].point_b;
+      bad_ptpl.intensity_ = pv_list[i].intensity;
+      bad_ptpl.is_valid_ = false;
+      bad_ptpl.dis_to_plane_ = 1.0; // 设置一个较大的距离
+      ptpl_bad_list_.push_back(bad_ptpl);
+    }
   }
 }
 
@@ -818,16 +852,16 @@ void VoxelMapManager::build_single_residual(pointWithVar &pv, const VoxelOctoTre
 
   double radius_k = 3;
   Eigen::Vector3d p_w = pv.point_w;
-  if (current_octo->plane_ptr_->is_plane_)
+  if (current_octo->plane_ptr_->is_plane_) //检查当前体素内是否包含有效平面
   {
     VoxelPlane &plane = *current_octo->plane_ptr_;
     Eigen::Vector3d p_world_to_center = p_w - plane.center_;
-    float dis_to_plane = fabs(plane.normal_(0) * p_w(0) + plane.normal_(1) * p_w(1) + plane.normal_(2) * p_w(2) + plane.d_);
+    float dis_to_plane = fabs(plane.normal_(0) * p_w(0) + plane.normal_(1) * p_w(1) + plane.normal_(2) * p_w(2) + plane.d_); // 点到平面的距离
     float dis_to_center = (plane.center_(0) - p_w(0)) * (plane.center_(0) - p_w(0)) + (plane.center_(1) - p_w(1)) * (plane.center_(1) - p_w(1)) +
-                          (plane.center_(2) - p_w(2)) * (plane.center_(2) - p_w(2));
-    float range_dis = sqrt(dis_to_center - dis_to_plane * dis_to_plane);
+                          (plane.center_(2) - p_w(2)) * (plane.center_(2) - p_w(2)); // 点到平面中心的距离平方
+    float range_dis = sqrt(dis_to_center - dis_to_plane * dis_to_plane); // 点到平面中心在平面内的投影距离
 
-    if (range_dis <= radius_k * plane.radius_)
+    if (range_dis <= radius_k * plane.radius_) // 如果点在平面影响范围内,则计算点到平面的距离(3倍平面半径)
     {
       Eigen::Matrix<double, 1, 6> J_nq;
       J_nq.block<1, 3>(0, 0) = p_w - plane.center_;
@@ -838,7 +872,7 @@ void VoxelMapManager::build_single_residual(pointWithVar &pv, const VoxelOctoTre
       {
         is_sucess = true;
         double this_prob = 1.0 / (sqrt(sigma_l)) * exp(-0.5 * dis_to_plane * dis_to_plane / sigma_l);
-        if (this_prob > prob)
+        if (this_prob > prob) // 当点可能在多个平面找到匹配时,选择概率最大的那个平面
         {
           prob = this_prob;
           pv.normal = plane.normal_;
@@ -869,9 +903,9 @@ void VoxelMapManager::build_single_residual(pointWithVar &pv, const VoxelOctoTre
   }
   else
   {
-    if (current_layer < max_layer)
+    if (current_layer < max_layer) // 如果当前层数未达到最大层数,则继续向下遍历八叉树
     {
-      for (size_t leafnum = 0; leafnum < 8; leafnum++)
+      for (size_t leafnum = 0; leafnum < 8; leafnum++) 
       {
         if (current_octo->leaves_[leafnum] != nullptr)
         {

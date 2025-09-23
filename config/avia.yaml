@@ -11,7 +11,7 @@ extrin_calib:
   extrinsic_R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
   Rcl: [0.00610193,-0.999863,-0.0154172,
         -0.00615449,0.0153796,-0.999863,
-        0.999962,0.00619598,-0.0060598] 
+        0.999962,0.00619598,-0.0060598]
   Pcl: [0.0194384, 0.104689,-0.0251952]
 
 time_offset: 
@@ -77,7 +77,7 @@ evo:
   pose_output_en: false
 
 pcd_save:
-  save_en: false
+  save_en: true
   colmap_output_en: false # need to set interval = -1
   filter_size_pcd: 0.15
   interval: -1
