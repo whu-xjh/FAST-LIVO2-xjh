@@ -248,7 +248,7 @@ void LIVMapper::initializeSubscribersAndPublishers(ros::NodeHandle &nh, image_tr
   pubLaserCloudBody = nh.advertise<sensor_msgs::PointCloud2>("/cloud_body", 100);
   pubNormal = nh.advertise<visualization_msgs::MarkerArray>("visualization_marker", 100);
   pubSubVisualMap = nh.advertise<sensor_msgs::PointCloud2>("/cloud_visual_sub_map_before", 100);
-  pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>("/cloud_effected", 100);
+  pubLaserCloudEffective = nh.advertise<sensor_msgs::PointCloud2>("/cloud_effective", 100);
   pubLaserCloudIneffective = nh.advertise<sensor_msgs::PointCloud2>("/cloud_ineffective", 100);
   pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("/Laser_map", 100);
   pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/aft_mapped_to_init", 10);
@@ -407,7 +407,7 @@ void LIVMapper::handleLIO()
   // 记录的相关信息依次为：相对时间戳、欧拉角（度）、位置、速度、陀螺仪偏差、加速度计偏差、曝光时间的倒数
 
   // 检查去畸变点云是否为空
-  if (feats_undistort->empty() || (feats_undistort == nullptr)) 
+  if (feats_undistort->empty() || (feats_undistort == nullptr))
   {
     std::cout << "[ LIO ]: No point!!!" << std::endl;
     return;
@@ -456,7 +456,7 @@ void LIVMapper::handleLIO()
     // 构建观测：点云到平面的距离
     for (int i = 0; i < effct_feat_num_; i++)
     {
-        meas_vec(i) = -ptpl_list_[i].dis_to_plane_;  // 观测值
+        meas_vec(i) = -ptpl_effective_list_[i].dis_to_plane_;  // 观测值
     }
     - 将当前帧点云与地图中的平面对齐
     - 点到平面的距离作为观测量
@@ -588,11 +588,11 @@ void LIVMapper::handleLIO()
   if (!img_en) publish_frame_world(pubLaserCloudFullRes, vio_manager); // 如果没有图像信息，发布点云
   publish_frame_body(pubLaserCloudBody); // 发布机身坐标系下的点云
   if (pub_effect_point_en) {
-    publish_effect_world(pubLaserCloudEffect, voxelmap_manager->ptpl_list_); // 发布有效点云
-    publish_ineffective_world(pubLaserCloudIneffective, voxelmap_manager->ptpl_bad_list_); // 发布无效点云
+    publish_effective_world(pubLaserCloudEffective, voxelmap_manager->ptpl_effective_list_); // 发布有效点云
+    publish_ineffective_world(pubLaserCloudIneffective, voxelmap_manager->ptpl_ineffective_list_); // 发布无效点云
   }
   if (voxelmap_manager->config_setting_.is_pub_plane_map_) voxelmap_manager->pubVoxelMap(); // 发布体素地图
-  if (save_en) save_frame_world(voxelmap_manager->ptpl_list_); // 保存点云到文件
+  if (save_en) save_frame_world(voxelmap_manager->ptpl_effective_list_); // 保存点云到文件
   publish_path(pubPath); // 发布路径
   publish_mavros(mavros_pose_publisher); // 发布MAVROS位姿
 
@@ -1515,7 +1515,7 @@ void LIVMapper::publish_visual_sub_map(const ros::Publisher &pubSubVisualMap)
   }
 }
 
-void LIVMapper::publish_effect_world(const ros::Publisher &pubLaserCloudEffect, const std::vector<PointToPlane> &ptpl_list)
+void LIVMapper::publish_effective_world(const ros::Publisher &pubLaserCloudEffective, const std::vector<PointToPlane> &ptpl_list)
 {
   int effect_feat_num = ptpl_list.size();
   PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI(effect_feat_num, 1));
@@ -1530,7 +1530,7 @@ void LIVMapper::publish_effect_world(const ros::Publisher &pubLaserCloudEffect, 
   pcl::toROSMsg(*laserCloudWorld, laserCloudFullRes3);
   laserCloudFullRes3.header.stamp = ros::Time::now();
   laserCloudFullRes3.header.frame_id = "camera_init";
-  pubLaserCloudEffect.publish(laserCloudFullRes3);
+  pubLaserCloudEffective.publish(laserCloudFullRes3);
 }
 
 void LIVMapper::publish_ineffective_world(const ros::Publisher &pubLaserCloudIneffective, const std::vector<PointToPlane> &ineffective_points)
@@ -1541,7 +1541,7 @@ void LIVMapper::publish_ineffective_world(const ros::Publisher &pubLaserCloudIne
   PointCloudXYZI::Ptr ineffectiveCloud(new PointCloudXYZI());
   ineffectiveCloud->reserve(ineffective_points.size());
 
-  // 直接从ptpl_bad_list_中提取无效点
+  // 直接从ptpl_ineffective_list_中提取无效点
   for (const auto& pt : ineffective_points) {
     PointType point;
     point.x = pt.point_w_[0];

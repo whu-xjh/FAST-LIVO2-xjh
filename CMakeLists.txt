@@ -45,7 +45,11 @@ ProcessorCount(N)
 message(STATUS "Processor count: ${N}")
 
 # Set the number of cores for multithreading
-if(N GREATER 4)
+if(N GREATER 8)
+  math(EXPR PROC_NUM "8")
+  add_definitions(-DMP_EN -DMP_PROC_NUM=${PROC_NUM})
+  message(STATUS "Multithreading enabled. Cores: ${PROC_NUM}")
+elseif(N GREATER 4)
   math(EXPR PROC_NUM "4")
   add_definitions(-DMP_EN -DMP_PROC_NUM=${PROC_NUM})
   message(STATUS "Multithreading enabled. Cores: ${PROC_NUM}")

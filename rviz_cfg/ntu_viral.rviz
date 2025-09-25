@@ -160,7 +160,7 @@ Visualization Manager:
           Size (Pixels): 5
           Size (m): 0.019999999552965164
           Style: Squares
-          Topic: /cloud_effected
+          Topic: /cloud_effective
           Unreliable: false
           Use Fixed Frame: true
           Use rainbow: true

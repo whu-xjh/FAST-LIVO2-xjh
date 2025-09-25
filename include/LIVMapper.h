@@ -78,7 +78,7 @@ public:
   void publish_frame_body(const ros::Publisher &pubLaserCloudBody);
 
   void publish_visual_sub_map(const ros::Publisher &pubSubVisualMap);
-  void publish_effect_world(const ros::Publisher &pubLaserCloudEffect, const std::vector<PointToPlane> &ptpl_list); 
+  void publish_effective_world(const ros::Publisher &pubLaserCloudEffective, const std::vector<PointToPlane> &ptpl_list);
   void publish_ineffective_world(const ros::Publisher &pubLaserCloudIneffective, const std::vector<PointToPlane> &ineffective_points);
   void publish_odometry(const ros::Publisher &pubOdomAftMapped);
   void publish_mavros(const ros::Publisher &mavros_pose_publisher);
@@ -159,7 +159,6 @@ public:
   vector<double> cameraextrinR;
   double IMG_POINT_COV;
 
-
   PointCloudXYZI::Ptr visual_sub_map;
   PointCloudXYZI::Ptr feats_undistort;
   PointCloudXYZI::Ptr feats_down_body;
@@ -200,7 +199,7 @@ public:
   ros::Publisher pubLaserCloudFullRes;
   ros::Publisher pubNormal;
   ros::Publisher pubSubVisualMap;
-  ros::Publisher pubLaserCloudEffect;
+  ros::Publisher pubLaserCloudEffective;
   ros::Publisher pubLaserCloudIneffective;
   ros::Publisher pubLaserCloudMap;
   ros::Publisher pubOdomAftMapped;

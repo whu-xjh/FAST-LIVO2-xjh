@@ -52,8 +52,8 @@ lio:
   beam_err: 0.05
   min_eigen_value: 0.0025 # 0.005
   voxel_size: 0.5
-  max_layer: 4
-  max_points_num: 20
+  max_layer: 2
+  max_points_num: 50
   layer_init_num: [5, 5, 5, 5, 5]
 
 local_map:  
@@ -62,7 +62,7 @@ local_map:
   sliding_thresh: 20
 
 uav:
-  imu_rate_odom: false
+  imu_rate_odom: true
   gravity_align_en: false
 
 publish:

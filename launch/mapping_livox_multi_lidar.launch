@@ -21,7 +21,7 @@
 	
 	<group if="$(arg rviz)">
 		<!-- 使用机器人跟随视角的RViz配置 -->
-		<node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find fast_livo)/rviz_cfg/fast_livo2.rviz" />
+		<node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find fast_livo)/rviz_cfg/livox_multi_lidar.rviz" />
 	</group>
 	
 	<node pkg="image_transport" type="republish" name="republish" args="compressed in:=/left_camera/image raw out:=/left_camera/image" output="screen" respawn="true"/>

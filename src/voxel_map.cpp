@@ -47,7 +47,7 @@ void calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_
 void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
 {
   nh.param<bool>("publish/pub_plane_en", voxel_config.is_pub_plane_map_, false);
-  
+
   nh.param<int>("lio/max_layer", voxel_config.max_layer_, 1);
   nh.param<double>("lio/voxel_size", voxel_config.max_voxel_size_, 0.5);
   nh.param<double>("lio/min_eigen_value", voxel_config.planner_threshold_, 0.01);
@@ -452,17 +452,17 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     }
    
     // double t1 = omp_get_wtime();
-    ptpl_list_.clear();
-    BuildResidualListOMP(pv_list_, ptpl_list_); // 寻找点云对应的平面并计算残差
+    ptpl_effective_list_.clear();
+    BuildResidualListOMP(pv_list_, ptpl_effective_list_); // 寻找点云对应的平面并计算残差
 
     // build_residual_time += omp_get_wtime() - t1;
 
     // 统计总残差和有效特征点数量
-    for (int i = 0; i < ptpl_list_.size(); i++)
+    for (int i = 0; i < ptpl_effective_list_.size(); i++)
     {
-      total_residual += fabs(ptpl_list_[i].dis_to_plane_);
+      total_residual += fabs(ptpl_effective_list_[i].dis_to_plane_);
     }
-    effct_feat_num_ = ptpl_list_.size();
+    effct_feat_num_ = ptpl_effective_list_.size();
     cout << "[ LIO ] Raw feature num: " << feats_undistort_->size() << ", downsampled feature num:" << feats_down_size_ 
          << " effective feature num: " << effct_feat_num_ << " average residual: " << total_residual / effct_feat_num_ << endl;
 
@@ -478,7 +478,7 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     // 为每个有效特征点计算观测雅可比矩阵和观测噪声协方差
     for (int i = 0; i < effct_feat_num_; i++)
     {
-      auto &ptpl = ptpl_list_[i];
+      auto &ptpl = ptpl_effective_list_[i];
       V3D point_this(ptpl.point_b_);
       point_this = extR_ * point_this + extT_;
       V3D point_body(ptpl.point_b_);
@@ -489,37 +489,37 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
       // 计算平面参数的雅可比矩阵J_nq
       V3D point_world = state_propagat.rot_end * point_this + state_propagat.pos_end;
       Eigen::Matrix<double, 1, 6> J_nq;
-      J_nq.block<1, 3>(0, 0) = point_world - ptpl_list_[i].center_; // 位置部分
-      J_nq.block<1, 3>(0, 3) = -ptpl_list_[i].normal_; // 法向量部分
+      J_nq.block<1, 3>(0, 0) = point_world - ptpl_effective_list_[i].center_; // 位置部分
+      J_nq.block<1, 3>(0, 3) = -ptpl_effective_list_[i].normal_; // 法向量部分
 
       M3D var;
-      // V3D normal_b = state_.rot_end.inverse() * ptpl_list_[i].normal_;
-      // V3D point_b = ptpl_list_[i].point_b_;
+      // V3D normal_b = state_.rot_end.inverse() * ptpl_effective_list_[i].normal_;
+      // V3D point_b = ptpl_effective_list_[i].point_b_;
       // double cos_theta = fabs(normal_b.dot(point_b) / point_b.norm());
-      // ptpl_list_[i].body_cov_ = ptpl_list_[i].body_cov_ * (1.0 / cos_theta) * (1.0 / cos_theta);
+      // ptpl_effective_list_[i].body_cov_ = ptpl_effective_list_[i].body_cov_ * (1.0 / cos_theta) * (1.0 / cos_theta);
 
       // point_w cov
-      // var = state_propagat.rot_end * extR_ * ptpl_list_[i].body_cov_ * (state_propagat.rot_end * extR_).transpose() +
+      // var = state_propagat.rot_end * extR_ * ptpl_effective_list_[i].body_cov_ * (state_propagat.rot_end * extR_).transpose() +
       //       state_propagat.cov.block<3, 3>(3, 3) + (-point_crossmat) * state_propagat.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose();
 
       // point_w cov (another_version)
-      // var = state_propagat.rot_end * extR_ * ptpl_list_[i].body_cov_ * (state_propagat.rot_end * extR_).transpose() +
+      // var = state_propagat.rot_end * extR_ * ptpl_effective_list_[i].body_cov_ * (state_propagat.rot_end * extR_).transpose() +
       //       state_propagat.cov.block<3, 3>(3, 3) - point_crossmat * state_propagat.cov.block<3, 3>(0, 0) * point_crossmat;
 
       // point_body cov
       // 计算测量协方差矩阵R
-      var = state_propagat.rot_end * extR_ * ptpl_list_[i].body_cov_ * (state_propagat.rot_end * extR_).transpose();
-      double sigma_l = J_nq * ptpl_list_[i].plane_var_ * J_nq.transpose();
-      R_inv(i) = 1.0 / (0.001 + sigma_l + ptpl_list_[i].normal_.transpose() * var * ptpl_list_[i].normal_);
-      // R_inv(i) = 1.0 / (sigma_l + ptpl_list_[i].normal_.transpose() * var * ptpl_list_[i].normal_);
+      var = state_propagat.rot_end * extR_ * ptpl_effective_list_[i].body_cov_ * (state_propagat.rot_end * extR_).transpose();
+      double sigma_l = J_nq * ptpl_effective_list_[i].plane_var_ * J_nq.transpose();
+      R_inv(i) = 1.0 / (0.001 + sigma_l + ptpl_effective_list_[i].normal_.transpose() * var * ptpl_effective_list_[i].normal_);
+      // R_inv(i) = 1.0 / (sigma_l + ptpl_effective_list_[i].normal_.transpose() * var * ptpl_effective_list_[i].normal_);
 
       /*** calculate the Measuremnt Jacobian matrix H ***/
       // 计算观测雅可比矩阵H
-      V3D A(point_crossmat * state_.rot_end.transpose() * ptpl_list_[i].normal_);
-      Hsub.row(i) << VEC_FROM_ARRAY(A), ptpl_list_[i].normal_[0], ptpl_list_[i].normal_[1], ptpl_list_[i].normal_[2];
-      Hsub_T_R_inv.col(i) << A[0] * R_inv(i), A[1] * R_inv(i), A[2] * R_inv(i), ptpl_list_[i].normal_[0] * R_inv(i),
-          ptpl_list_[i].normal_[1] * R_inv(i), ptpl_list_[i].normal_[2] * R_inv(i);
-      meas_vec(i) = -ptpl_list_[i].dis_to_plane_;
+      V3D A(point_crossmat * state_.rot_end.transpose() * ptpl_effective_list_[i].normal_);
+      Hsub.row(i) << VEC_FROM_ARRAY(A), ptpl_effective_list_[i].normal_[0], ptpl_effective_list_[i].normal_[1], ptpl_effective_list_[i].normal_[2];
+      Hsub_T_R_inv.col(i) << A[0] * R_inv(i), A[1] * R_inv(i), A[2] * R_inv(i), ptpl_effective_list_[i].normal_[0] * R_inv(i),
+          ptpl_effective_list_[i].normal_[1] * R_inv(i), ptpl_effective_list_[i].normal_[2] * R_inv(i);
+      meas_vec(i) = -ptpl_effective_list_[i].dis_to_plane_;
     }
 
     // 卡尔曼滤波迭代更新
@@ -695,7 +695,7 @@ void VoxelMapManager::UpdateVoxelMap(const std::vector<pointWithVar> &input_poin
   int max_layer = config_setting_.max_layer_;
   int max_points_num = config_setting_.max_points_num_;
   std::vector<int> layer_init_num = config_setting_.layer_init_num_;
-  
+
   uint plsize = input_points.size();
   for (uint i = 0; i < plsize; i++)
   {
@@ -731,7 +731,7 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
   double sigma_num = config_setting_.sigma_num_; // 获取标准差倍数
   std::mutex mylock; // 线程锁,用于多线程同步,保护共享资源
   ptpl_list.clear();
-  ptpl_bad_list_.clear();
+  ptpl_ineffective_list_.clear();
 
   std::vector<PointToPlane> all_ptpl_list(pv_list.size()); // 存储所有点面的对应关系
   std::vector<bool> useful_ptpl(pv_list.size()); // 标记每个点是否找到有效的平面
@@ -832,15 +832,14 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
     if (useful_ptpl[i]) {
       ptpl_list.push_back(all_ptpl_list[i]);
     } else {
-      // 将无效点也保存起来
       PointToPlane bad_ptpl = all_ptpl_list[i];
       bad_ptpl.point_w_ = pv_list[i].point_w;
       bad_ptpl.point_b_ = pv_list[i].point_b;
       bad_ptpl.intensity_ = pv_list[i].intensity;
       bad_ptpl.is_valid_ = false;
       bad_ptpl.dis_to_plane_ = 1.0; // 设置一个较大的距离
-      ptpl_bad_list_.push_back(bad_ptpl);
-    }
+      ptpl_ineffective_list_.push_back(bad_ptpl);
+      }
   }
 }
 
@@ -1104,3 +1103,4 @@ void VoxelMapManager::clearMemOutOfMap(const int& x_max,const int& x_min,const i
   std::cout<<YELLOW<<"[DEBUG]: Delete "<<delete_voxel_cout<<" root voxels"<<RESET<<"\n";
   // std::cout<<RED<<"[DEBUG]: Delete "<<delete_voxel_cout<<" voxels using "<<delete_time<<" s"<<RESET<<"\n";
 }
+

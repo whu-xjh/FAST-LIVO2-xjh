@@ -42,7 +42,7 @@ vio:
 # imu参数      
 imu:
   imu_en: true
-  imu_int_frame: 30
+  imu_int_frame: 100
   acc_cov: 0.5 # 0.2
   gyr_cov: 0.3 # 0.5
   b_acc_cov: 0.0001 # 0.1
@@ -50,7 +50,7 @@ imu:
 
 # 激光雷达里程计
 lio:
-  max_iterations: 10
+  max_iterations: 20
   dept_err: 0.02
   beam_err: 0.05
   min_eigen_value: 0.0025 # 0.005
@@ -59,7 +59,7 @@ lio:
   max_points_num: 50
   layer_init_num: [5, 5, 5, 5, 5]
 
-local_map:  
+local_map:
   map_sliding_en: true
   half_map_size: 500
   sliding_thresh: 20
