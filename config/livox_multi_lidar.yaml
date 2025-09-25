@@ -58,11 +58,13 @@ lio:
   max_layer: 2
   max_points_num: 50
   layer_init_num: [5, 5, 5, 5, 5]
+  intensity_threshold: -1  # 新增强度阈值参数
+  sigma_num: 4
 
 local_map:
   map_sliding_en: true
   half_map_size: 500
-  sliding_thresh: 20
+  sliding_thresh: 10
 
 uav:
   imu_rate_odom: true
@@ -74,6 +76,8 @@ publish:
   pub_plane_en: false
   pub_scan_num: 1
   blind_rgb_points: 0.0
+  publish_cloud_body: false  # 是否发布body坐标系下的点云
+  publish_ground_cloud: true  # 是否发布地面点云
 
 evo:
   seq_name: "CBD_Building_01"

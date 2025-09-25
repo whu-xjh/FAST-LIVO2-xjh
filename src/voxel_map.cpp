@@ -57,6 +57,7 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
   nh.param<vector<int>>("lio/layer_init_num", voxel_config.layer_init_num_, vector<int>{5,5,5,5,5});
   nh.param<int>("lio/max_points_num", voxel_config.max_points_num_, 50);
   nh.param<int>("lio/max_iterations", voxel_config.max_iterations_, 5);
+  nh.param<double>("lio/intensity_threshold", voxel_config.intensity_thresh_, -1.0);
 
   nh.param<bool>("local_map/map_sliding_en", voxel_config.map_sliding_en, false);
   nh.param<int>("local_map/half_map_size", voxel_config.half_map_size, 100);
@@ -72,15 +73,19 @@ void VoxelOctoTree::init_plane(const std::vector<pointWithVar> &points, VoxelPla
   plane->normal_ = Eigen::Vector3d::Zero(); // 平面法向量
   plane->points_size_ = points.size(); // 点云数量
   plane->radius_ = 0; // 平面半径
+  plane->mean_intensity_ = 0.0f; // 平面平均强度
 
   // 2.计算点云的协方差矩阵和中心点
   // 协方差举证描述点云在三个方向上的分布情况
+  double intensity_sum = 0.0; // 累加强度值
   for (auto pv : points)
   {
     plane->covariance_ += pv.point_w * pv.point_w.transpose(); // 累加点云的外积矩阵
     plane->center_ += pv.point_w; // 累加点云位置
+    intensity_sum += static_cast<double>(pv.intensity); // 累加强度值
   }
   plane->center_ = plane->center_ / plane->points_size_; // 计算点云的质心
+  plane->mean_intensity_ = static_cast<float>(intensity_sum / static_cast<double>(plane->points_size_)); // 计算平均强度
   plane->covariance_ = plane->covariance_ / plane->points_size_ - plane->center_ * plane->center_.transpose(); // 计算点云的协方差矩阵
   
   // 3.特征值分解，提取平面法向量和其他参数
@@ -599,6 +604,55 @@ void VoxelMapManager::TransformLidar(const Eigen::Matrix3d rot, const Eigen::Vec
   }
 }
 
+void VoxelMapManager::UpdateGroundFlagForColumn(const VOXEL_COLUMN_LOCATION &column_key,
+                                                std::map<int64_t, VoxelOctoTree *> &column_voxels)
+{
+  for (auto &voxel_pair : column_voxels)
+  {
+    voxel_pair.second->is_ground_voxel_ = false;
+  }
+  if (!column_voxels.empty())
+  {
+    column_voxels.begin()->second->is_ground_voxel_ = true;
+  }
+}
+
+void VoxelMapManager::RegisterVoxelToColumn(const VOXEL_LOCATION &position, VoxelOctoTree *voxel)
+{
+  if (voxel == nullptr)
+  {
+    return;
+  }
+  VOXEL_COLUMN_LOCATION column_key(position.x, position.y);
+  auto &column_voxels = column_voxels_[column_key];
+  column_voxels[position.z] = voxel;
+  UpdateGroundFlagForColumn(column_key, column_voxels);
+}
+
+void VoxelMapManager::UnregisterVoxelFromColumn(const VOXEL_LOCATION &position)
+{
+  VOXEL_COLUMN_LOCATION column_key(position.x, position.y);
+  auto column_iter = column_voxels_.find(column_key);
+  if (column_iter == column_voxels_.end())
+  {
+    return;
+  }
+  auto &column_voxels = column_iter->second;
+  auto voxel_iter = column_voxels.find(position.z);
+  if (voxel_iter != column_voxels.end())
+  {
+    column_voxels.erase(voxel_iter);
+  }
+  if (column_voxels.empty())
+  {
+    column_voxels_.erase(column_iter);
+  }
+  else
+  {
+    UpdateGroundFlagForColumn(column_key, column_voxels);
+  }
+}
+
 // 仅在系统首次运行时执行，用于构建初始体素地图，为后续ICP配准提供参考
 void VoxelMapManager::BuildVoxelMap()
 {
@@ -662,6 +716,7 @@ void VoxelMapManager::BuildVoxelMap()
       voxel_map_[position]->temp_points_.push_back(p_v);
       voxel_map_[position]->new_points_++;
       voxel_map_[position]->layer_init_num_ = layer_init_num;
+      RegisterVoxelToColumn(position, voxel_map_[position]);
     }
   }
 
@@ -719,6 +774,7 @@ void VoxelMapManager::UpdateVoxelMap(const std::vector<pointWithVar> &input_poin
       voxel_map_[position]->voxel_center_[1] = (0.5 + position.y) * voxel_size;
       voxel_map_[position]->voxel_center_[2] = (0.5 + position.z) * voxel_size;
       voxel_map_[position]->UpdateOctoTree(p_v);
+      RegisterVoxelToColumn(position, voxel_map_[position]);
     }
   }
 }
@@ -854,6 +910,13 @@ void VoxelMapManager::build_single_residual(pointWithVar &pv, const VoxelOctoTre
   if (current_octo->plane_ptr_->is_plane_) //检查当前体素内是否包含有效平面
   {
     VoxelPlane &plane = *current_octo->plane_ptr_;
+
+    if (config_setting_.intensity_thresh_ >= 0.0)
+    {
+      double intensity_diff = fabs(static_cast<double>(pv.intensity) - static_cast<double>(plane.mean_intensity_));
+      if (intensity_diff > config_setting_.intensity_thresh_) { return; }
+    }
+
     Eigen::Vector3d p_world_to_center = p_w - plane.center_;
     float dis_to_plane = fabs(plane.normal_(0) * p_w(0) + plane.normal_(1) * p_w(1) + plane.normal_(2) * p_w(2) + plane.d_); // 点到平面的距离
     float dis_to_center = (plane.center_(0) - p_w(0)) * (plane.center_(0) - p_w(0)) + (plane.center_(1) - p_w(1)) * (plane.center_(1) - p_w(1)) +
@@ -1092,7 +1155,11 @@ void VoxelMapManager::clearMemOutOfMap(const int& x_max,const int& x_min,const i
     bool should_remove = loc.x > x_max || loc.x < x_min || loc.y > y_max || loc.y < y_min || loc.z > z_max || loc.z < z_min;
     if (should_remove){
       // last_delete_time = omp_get_wtime();
-      delete it->second;
+      // delete it->second;
+      VOXEL_LOCATION remove_loc = loc;
+      VoxelOctoTree *voxel_ptr = it->second;
+      UnregisterVoxelFromColumn(remove_loc);
+      delete voxel_ptr;
       it = voxel_map_.erase(it);
       // delete_time += omp_get_wtime() - last_delete_time;
       delete_voxel_cout++;

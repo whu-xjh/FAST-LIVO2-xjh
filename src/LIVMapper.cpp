@@ -19,6 +19,8 @@ which is included as part of this source code package.
 #include <laszip_api.h>
 #include <type_traits>
 #include <pcl/point_types.h>
+#include <unordered_map>
+#include <unordered_set>
 
 LIVMapper::LIVMapper(ros::NodeHandle &nh)
     : extT(0, 0, 0),
@@ -51,6 +53,7 @@ LIVMapper::LIVMapper(ros::NodeHandle &nh)
   laserCloudWorldRGB_shared.reset(new PointCloudXYZRGB());
   ptpl_list_wait_save.clear();
   voxelmap_manager.reset(new VoxelMapManager(voxel_config, voxel_map));
+  voxelmap_ground_manager.reset(new VoxelMapManager(voxel_config, voxel_map));
   vio_manager.reset(new VIOManager());
   root_dir = ROOT_DIR;
   initializeFiles();
@@ -108,7 +111,6 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<bool>("imu/gravity_est_en", gravity_est_en, true);
   nh.param<bool>("imu/ba_bg_est_en", ba_bg_est_en, true);
 
-
   nh.param<double>("preprocess/blind", p_pre->blind, 0.01);
   nh.param<double>("preprocess/filter_size_surf", filter_size_surf_min, 0.5);
   nh.param<bool>("preprocess/hilti_en", hilti_en, false);
@@ -116,7 +118,6 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<int>("preprocess/scan_line", p_pre->N_SCANS, 6);
   nh.param<int>("preprocess/point_filter_num", p_pre->point_filter_num, 3);
   nh.param<bool>("preprocess/feature_extract_enabled", p_pre->feature_enabled, false);
-
   
   nh.param<int>("lidar_save/interval", save_interval, -1);
   nh.param<bool>("lidar_save/save_en", save_en, false);
@@ -135,8 +136,9 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<int>("publish/pub_scan_num", pub_scan_num, 1);
   nh.param<bool>("publish/pub_effect_point_en", pub_effect_point_en, false);
   nh.param<bool>("publish/dense_map_en", dense_map_en, false);
+  nh.param<bool>("publish/pub_cloud_body", publish_cloud_body, false);
+  nh.param<bool>("publish/publish_ground_cloud", publish_ground_cloud_en, false);
 
-  
   p_pre->blind_sqr = p_pre->blind * p_pre->blind;
 }
 
@@ -258,7 +260,8 @@ void LIVMapper::initializeSubscribersAndPublishers(ros::NodeHandle &nh, image_tr
   mavros_pose_publisher = nh.advertise<geometry_msgs::PoseStamped>("/mavros/vision_pose/pose", 10);
   pubImage = it.advertise("/rgb_img", 1);
   pubImuPropOdom = nh.advertise<nav_msgs::Odometry>("/LIVO2/imu_propagate", 10000);
-  
+  pubGroundCloud = nh.advertise<sensor_msgs::PointCloud2>("/ground_cloud", 100);
+
   imu_prop_timer = nh.createTimer(ros::Duration(0.004), &LIVMapper::imu_prop_callback, this);
   voxelmap_manager->voxel_map_pub_= nh.advertise<visualization_msgs::MarkerArray>("/planes", 10000);
 }
@@ -411,6 +414,25 @@ void LIVMapper::handleLIO()
   {
     std::cout << "[ LIO ]: No point!!!" << std::endl;
     return;
+  }
+
+  // 地面点提取和发布
+  double ground_extract_start = omp_get_wtime();
+  if (voxelmap_ground_manager != nullptr) {
+    voxelmap_ground_manager->feats_down_world_ = feats_undistort;
+    voxelmap_ground_manager->BuildVoxelMap();
+
+    // 提取地面点
+    PointCloudXYZI::Ptr ground_points(new PointCloudXYZI());
+    extractGroundPoints(feats_undistort, ground_points);
+    double ground_extract_time = omp_get_wtime() - ground_extract_start;
+
+    if (publish_ground_cloud_en && !ground_points->empty()) {
+      publish_ground_cloud(pubGroundCloud, ground_points, ground_extract_time);
+    }
+
+    // 释放地面体素地图内存
+    voxelmap_ground_manager->voxel_map_.clear();
   }
 
   // 点云下采样
@@ -586,7 +608,7 @@ void LIVMapper::handleLIO()
   double t6 = omp_get_wtime();
 
   if (!img_en) publish_frame_world(pubLaserCloudFullRes, vio_manager); // 如果没有图像信息，发布点云
-  publish_frame_body(pubLaserCloudBody); // 发布机身坐标系下的点云
+  if (publish_cloud_body) publish_frame_body(pubLaserCloudBody); // 发布机身坐标系下的点云
   if (pub_effect_point_en) {
     publish_effective_world(pubLaserCloudEffective, voxelmap_manager->ptpl_effective_list_); // 发布有效点云
     publish_ineffective_world(pubLaserCloudIneffective, voxelmap_manager->ptpl_ineffective_list_); // 发布无效点云
@@ -1769,6 +1791,61 @@ void LIVMapper::queueLazSaveTask(const std::string& filename, std::function<void
   laz_queue_cv_.notify_one();
 
   std::cout << CYAN << "Queued LAZ save task: " << filename << " (queue size: " << laz_save_queue_.size() << ")" << RESET << std::endl;
+}
+
+void LIVMapper::extractGroundPoints(const PointCloudXYZI::Ptr& input_cloud, PointCloudXYZI::Ptr& ground_points)
+{
+  if (input_cloud->empty() || voxelmap_ground_manager == nullptr) {
+    return;
+  }
+
+  ground_points->clear();
+  ground_points->reserve(input_cloud->size());
+
+  // 获取体素大小
+  double voxel_size = voxelmap_ground_manager->config_setting_.max_voxel_size_;
+
+  // 遍历输入点云中的每个点（直接使用原始坐标系，无需转换）
+  for (const auto& point : input_cloud->points) {
+    // 计算点所在的体素位置（直接使用原始坐标）
+    VOXEL_LOCATION voxel_loc(
+      static_cast<int64_t>(floor(point.x / voxel_size)),
+      static_cast<int64_t>(floor(point.y / voxel_size)),
+      static_cast<int64_t>(floor(point.z / voxel_size))
+    );
+
+    // 在voxelmap_ground_manager中查找对应的体素
+    if (voxelmap_ground_manager != nullptr) {
+      auto it = voxelmap_ground_manager->voxel_map_.find(voxel_loc);
+      if (it != voxelmap_ground_manager->voxel_map_.end()) {
+        // 检查该体素是否为地面体素
+        VoxelOctoTree* voxel = it->second;
+        if (voxel != nullptr && voxel->is_ground_voxel_) {
+          // 如果是地面体素，则将该点添加到地面点集合中
+          ground_points->points.push_back(point);
+        }
+      }
+    }
+  }
+
+  ground_points->width = ground_points->points.size();
+  ground_points->height = 1;
+}
+
+void LIVMapper::publish_ground_cloud(const ros::Publisher &pubGroundCloud, const PointCloudXYZI::Ptr &ground_points, const double &extract_time)
+{
+  if (ground_points->empty()) return;
+
+  // 创建地面点云消息
+  sensor_msgs::PointCloud2 groundCloudMsg;
+  pcl::toROSMsg(*ground_points, groundCloudMsg);
+  groundCloudMsg.header.stamp = ros::Time::now();
+  groundCloudMsg.header.frame_id = "camera_init";
+  pubGroundCloud.publish(groundCloudMsg);
+
+  // 输出提取时间信息
+  printf("\033[1;32m[ Ground Extraction ]: %zu ground points extracted, time: %.6f secs\033[0m\n",
+         ground_points->size(), extract_time);
 }
 
 

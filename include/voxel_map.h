@@ -17,6 +17,7 @@ which is included as part of this source code package.
 #include <Eigen/Dense>
 #include <fstream>
 #include <math.h>
+#include <map>
 #include <mutex>
 #include <omp.h>
 #include <pcl/common/io.h>
@@ -44,6 +45,7 @@ typedef struct VoxelMapConfig
   double dept_err_;
   double sigma_num_;
   bool is_pub_plane_map_;
+  double intensity_thresh_;
 
   // config of local map sliding
   double sliding_thresh;
@@ -85,6 +87,7 @@ typedef struct VoxelPlane
   bool is_init_ = false;
   int id_ = 0;
   bool is_update_ = false;
+  double mean_intensity_ = 0.0f;
   VoxelPlane()
   {
     plane_var_ = Eigen::Matrix<double, 6, 6>::Zero();
@@ -104,6 +107,16 @@ public:
   bool operator==(const VOXEL_LOCATION &other) const { return (x == other.x && y == other.y && z == other.z); }
 };
 
+class VOXEL_COLUMN_LOCATION
+{
+public:
+  int64_t x, y;
+
+  VOXEL_COLUMN_LOCATION(int64_t vx = 0, int64_t vy = 0) : x(vx), y(vy) {}
+
+  bool operator==(const VOXEL_COLUMN_LOCATION &other) const { return (x == other.x && y == other.y); }
+};
+
 // Hash value
 namespace std
 {
@@ -114,6 +127,16 @@ template <> struct hash<VOXEL_LOCATION>
     using std::hash;
     using std::size_t;
     return ((((s.z) * VOXELMAP_HASH_P) % VOXELMAP_MAX_N + (s.y)) * VOXELMAP_HASH_P) % VOXELMAP_MAX_N + (s.x);
+  }
+};
+
+template <> struct hash<VOXEL_COLUMN_LOCATION>
+{
+  int64_t operator()(const VOXEL_COLUMN_LOCATION &s) const
+  {
+    using std::hash;
+    using std::size_t;
+    return (((s.y) * VOXELMAP_HASH_P) % VOXELMAP_MAX_N + (s.x));
   }
 };
 } // namespace std
@@ -148,10 +171,11 @@ public:
   int new_points_;
   bool init_octo_;
   bool update_enable_;
+  bool is_ground_voxel_ = false;
 
   VoxelOctoTree(int max_layer, int layer, int points_size_threshold, int max_points_num, float planer_threshold)
       : max_layer_(max_layer), layer_(layer), points_size_threshold_(points_size_threshold), max_points_num_(max_points_num),
-        planer_threshold_(planer_threshold)
+        planer_threshold_(planer_threshold), is_ground_voxel_(false)
   {
     temp_points_.clear();
     octo_state_ = 0;
@@ -193,6 +217,7 @@ public:
   int current_frame_id_ = 0;
   ros::Publisher voxel_map_pub_;
   std::unordered_map<VOXEL_LOCATION, VoxelOctoTree *> voxel_map_;
+  std::unordered_map<VOXEL_COLUMN_LOCATION, std::map<int64_t, VoxelOctoTree *>> column_voxels_;
 
   PointCloudXYZI::Ptr feats_undistort_;
   PointCloudXYZI::Ptr feats_down_body_;
@@ -248,6 +273,10 @@ std::vector<PointToPlane> ptpl_ineffective_list_;
   void clearMemOutOfMap(const int& x_max,const int& x_min,const int& y_max,const int& y_min,const int& z_max,const int& z_min );
 
 private:
+  void RegisterVoxelToColumn(const VOXEL_LOCATION &position, VoxelOctoTree *voxel);
+  void UnregisterVoxelFromColumn(const VOXEL_LOCATION &position);
+  void UpdateGroundFlagForColumn(const VOXEL_COLUMN_LOCATION &column_key, std::map<int64_t, VoxelOctoTree *> &column_voxels);
+
   void GetUpdatePlane(const VoxelOctoTree *current_octo, const int pub_max_voxel_layer, std::vector<VoxelPlane> &plane_list);
 
   void pubSinglePlane(visualization_msgs::MarkerArray &plane_pub, const std::string plane_ns, const VoxelPlane &single_plane, const float alpha,
