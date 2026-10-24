@@ -69,7 +69,7 @@ public:
   std::unordered_map<VOXEL_LOCATION, VoxelOctoTree *> voxel_map;
   
   string root_dir;
-  string lid_topic, imu_topic, seq_name, img_topic;
+  string lid_topic, imu_topic, seq_name, img_topic, pose_output_dir;
   V3D extT;
   M3D extR;
 
@@ -182,6 +182,7 @@ public:
   double aver_time_consu = 0;
   double aver_time_icp = 0;
   double aver_time_map_inre = 0;
+  double aver_time_down = 0;
   bool colmap_output_en = false;
 };
 #endif

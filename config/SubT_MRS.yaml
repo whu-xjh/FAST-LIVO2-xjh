@@ -1,0 +1,136 @@
+common:
+  img_topic: "/camera_1/image_raw"
+  lid_topic: "/velodyne_points"
+  imu_topic: "/imu/data"
+  img_en: 0
+  lidar_en: 1
+  ros_driver_bug_fix: false
+
+extrin_calib:
+  # Laurel_Cavern
+  # extrinsic_T: [0.080, 0.029, 0.030]
+  # extrinsic_R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+
+  # Final_Challenge, Urban_Challenge
+  extrinsic_T: [0.0, 0.0, 0.0]
+  extrinsic_R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+
+  # Long_Corridor
+  # extrinsic_T: [0.080, 0.029, 0.030]
+  # extrinsic_R: [0.9992129, -0.000519121,  0.004, 0.000516111,  0.999218492, -0.000939132, -0.004,  0.000802565,  0.999993652]
+
+  # Corridor02
+  # extrinsic_T: [0.0, 0.0, 0.0]
+  # extrinsic_T: [0.999954875339377, 0.0000000, 0.009499857104811, 0.0000000, 1.0000000, 0.0000000, -0.009499857104811, 0.0000000, 0.999954875339377]
+
+  # Multi_Floor
+  # extrinsic_T: [0.080, 0.029, 0.030]
+  # extrinsic_R: [0.999945562, 0.009074807,  0.005149763, -0.009060897, 0.999955255, -0.002718066, -0.005174199, 0.002671256,  0.999983046]
+
+  # Camera to IMU extrinsic (Corridor)
+  Rcl: [-0.01578308, -0.01124397,  0.99981222,
+        -0.99975463, -0.01536642, -0.01595499,
+         0.01554293, -0.99981871, -0.01099868]
+  Pcl: [0.17313616, 0.0476788, -0.01933398]
+
+time_offset:
+  lidar_time_offset: 0.0
+  imu_time_offset: 0.1
+  img_time_offset: 0.1
+  exposure_time_init: 0.0
+
+preprocess:
+  point_filter_num: 3
+  filter_size_surf: 0.1
+  lidar_type: 2  # Velodyne
+  scan_line: 16
+  blind: 0.4
+
+# Visual Odometry
+vio:
+  max_iterations: 5
+  outlier_threshold: 1000
+  img_point_cov: 100
+  patch_size: 8
+  patch_pyrimid_level: 4
+  normal_en: true
+  raycast_en: false
+  inverse_composition_en: false
+  exposure_estimate_en: true
+  inv_expo_cov: 0.1
+  capacity: 0  # LRU cache (0 = disable)
+
+# IMU
+imu:
+  imu_en: true
+  imu_int_frame: 30
+
+  # standard setting
+  acc_cov: 0.1
+  gyr_cov: 0.1
+  b_acc_cov: 0.0001
+  b_gyr_cov: 0.0001
+
+  # Long_Corridor
+  # acc_cov: 0.2
+  # gyr_cov: 1.0
+  # b_acc_cov: 0.0001
+  # b_gyr_cov: 0.0001
+
+  # Multi_Floor
+  # acc_cov: 0.3
+  # gyr_cov: 0.1
+  # b_acc_cov: 0.0001
+  # b_gyr_cov: 0.0001
+
+  # Final_Challenge, Urban_Challenge
+  # acc_cov: 0.2
+  # gyr_cov: 0.05
+  # b_acc_cov: 0.00001
+  # b_gyr_cov: 0.00001
+
+  # cave04
+  # acc_cov: 1.0
+  # gyr_cov: 0.1
+  # b_acc_cov: 0.0001
+  # b_gyr_cov: 0.0001
+
+# LiDAR-Inertial Odometry
+lio:
+  max_iterations: 5
+  dept_err: 0.03
+  beam_err: 0.05
+  min_eigen_value: 0.0025
+  voxel_size: 0.5
+  max_layer: 1
+  max_points_num: 100
+  layer_init_num: [5, 5, 5, 5, 5]
+  sigma_num: 3
+
+local_map:
+  map_sliding_en: false
+  half_map_size: 1000
+  sliding_thresh: 8
+
+uav:
+  imu_rate_odom: false
+  gravity_align_en: true
+
+publish:
+  dense_map_en: true
+  pub_effect_en: true
+  pub_plane_en: false
+  pub_body_en: false
+  pub_scan_num: 1
+  blind_rgb_points: 0.0
+
+evo:
+  seq_name: "result"
+  pose_output_en: true
+  pose_output_dir: "/home/wsl-4080/code/traj_evo/pred/fast-livo2/"
+
+lidar_save:
+  save_en: false
+  colmap_output_en: false
+  filter_size_pcd: 0.15
+  interval: -1  # -1 = save all in one file (memory risk)

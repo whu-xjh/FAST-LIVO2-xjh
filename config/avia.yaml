@@ -1,14 +1,16 @@
 common:
   img_topic: "/left_camera/image"
   lid_topic: "/livox/lidar"
-  imu_topic: "/livox/imu"
-  img_en: 1
+  imu_topic: "/imu/data"
+  img_en: 0
   lidar_en: 1
   ros_driver_bug_fix: false
 
 extrin_calib:
-  extrinsic_T: [0.04165, 0.02326, -0.0284]
-  extrinsic_R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+  extrinsic_R: [0.999620, 0.027463, 0.002445,
+                -0.027517, 0.999299, 0.025398,
+                -0.001746, -0.025456, 0.999674]
+  extrinsic_T: [0.049258, -0.012500, 0.026946]
   Rcl: [0.00610193,-0.999863,-0.0154172,
         -0.00615449,0.0153796,-0.999863,
         0.999962,0.00619598,-0.0060598] 
@@ -21,7 +23,7 @@ time_offset:
 
 preprocess:
   point_filter_num: 1
-  filter_size_surf: 0.1
+  filter_size_surf: 0.5
   lidar_type: 1 # Livox Avia LiDAR
   scan_line: 6
   blind: 0.8
@@ -47,13 +49,13 @@ imu:
   b_gyr_cov: 0.0001 # 0.1
 
 lio:
-  max_iterations: 5
+  max_iterations: 10
   dept_err: 0.02
   beam_err: 0.05
   min_eigen_value: 0.0025 # 0.005
-  voxel_size: 0.5
+  voxel_size: 1
   max_layer: 2
-  max_points_num: 50
+  max_points_num: 100
   layer_init_num: [5, 5, 5, 5, 5]
 
 local_map:  
@@ -62,8 +64,8 @@ local_map:
   sliding_thresh: 8
 
 uav:
-  imu_rate_odom: false
-  gravity_align_en: false
+  imu_rate_odom: true
+  gravity_align_en: true
 
 publish:
   dense_map_en: true
@@ -73,8 +75,9 @@ publish:
   blind_rgb_points: 0.0
 
 evo:
-  seq_name: "CBD_Building_01"
-  pose_output_en: false
+  seq_name: "tunneling_tunnel5_fast-livo2"
+  pose_output_en: true
+  pose_output_dir: "/home/wsl-4080/code/traj_evo/pred/fast-livo2-lio/"
 
 pcd_save:
   pcd_save_en: false

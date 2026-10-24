@@ -78,6 +78,7 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
 
   nh.param<string>("evo/seq_name", seq_name, "01");
   nh.param<bool>("evo/pose_output_en", pose_output_en, false);
+  nh.param<string>("evo/pose_output_dir", pose_output_dir, "/home/wsl-4080/code/traj_evo/pred/fast-livo2-lio/");
   nh.param<double>("imu/gyr_cov", gyr_cov, 1.0);
   nh.param<double>("imu/acc_cov", acc_cov, 1.0);
   nh.param<int>("imu/imu_int_frame", imu_int_frame, 3);
@@ -381,20 +382,20 @@ void LIVMapper::handleLIO()
     state_update_flg = true;
   }
 
-  if (pose_output_en) 
+  if (pose_output_en)
   {
     static bool pos_opend = false;
     static int ocount = 0;
     std::ofstream outFile, evoFile;
-    if (!pos_opend) 
+    if (!pos_opend)
     {
-      evoFile.open(std::string(ROOT_DIR) + "Log/result/" + seq_name + ".txt", std::ios::out);
+      evoFile.open(pose_output_dir + seq_name + ".txt", std::ios::out);
       pos_opend = true;
       if (!evoFile.is_open()) ROS_ERROR("open fail\n");
-    } 
-    else 
+    }
+    else
     {
-      evoFile.open(std::string(ROOT_DIR) + "Log/result/" + seq_name + ".txt", std::ios::app);
+      evoFile.open(pose_output_dir + seq_name + ".txt", std::ios::app);
       if (!evoFile.is_open()) ROS_ERROR("open fail\n");
     }
     Eigen::Matrix4d outT;
@@ -450,9 +451,9 @@ void LIVMapper::handleLIO()
 
   frame_num++;
   aver_time_consu = aver_time_consu * (frame_num - 1) / frame_num + (t4 - t0) / frame_num;
-
-  // aver_time_icp = aver_time_icp * (frame_num - 1) / frame_num + (t2 - t1) / frame_num;
-  // aver_time_map_inre = aver_time_map_inre * (frame_num - 1) / frame_num + (t4 - t3) / frame_num;
+  aver_time_down = aver_time_down * (frame_num - 1) / frame_num + (t_down - t0) / frame_num;
+  aver_time_icp = aver_time_icp * (frame_num - 1) / frame_num + (t2 - t1) / frame_num;
+  aver_time_map_inre = aver_time_map_inre * (frame_num - 1) / frame_num + (t4 - t3) / frame_num;
   // aver_time_solve = aver_time_solve * (frame_num - 1) / frame_num + (solve_time) / frame_num;
   // aver_time_const_H_time = aver_time_const_H_time * (frame_num - 1) / frame_num + solve_const_H_time / frame_num;
   // printf("[ mapping time ]: per scan: propagation %0.6f downsample: %0.6f match: %0.6f solve: %0.6f  ICP: %0.6f  map incre: %0.6f total: %0.6f \n"
@@ -462,18 +463,17 @@ void LIVMapper::handleLIO()
   // printf("\033[1;36m[ LIO mapping time ]: current scan: icp: %0.6f secs, map incre: %0.6f secs, total: %0.6f secs.\033[0m\n"
   //         "\033[1;36m[ LIO mapping time ]: average: icp: %0.6f secs, map incre: %0.6f secs, total: %0.6f secs.\033[0m\n",
   //         t2 - t1, t4 - t3, t4 - t0, aver_time_icp, aver_time_map_inre, aver_time_consu);
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-  printf("\033[1;34m|                         LIO Mapping Time                    |\033[0m\n");
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-  printf("\033[1;34m| %-29s | %-27s |\033[0m\n", "Algorithm Stage", "Time (secs)");
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "DownSample", t_down - t0);
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "ICP", t2 - t1);
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "updateVoxelMap", t4 - t3);
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "Current Total Time", t4 - t0);
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "Average Total Time", aver_time_consu);
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
+  printf("\033[1;34m+-----------------------------------------------------------------------------+\033[0m\n");
+  printf("\033[1;34m|                              LIO Mapping Time                              |\033[0m\n");
+  printf("\033[1;34m+-----------------------------------------------------------------------------+\033[0m\n");
+  printf("\033[1;34m| %-29s | %-20s | %-20s |\033[0m\n", "Algorithm Stage", "Current (secs)", "Average (secs)");
+  printf("\033[1;34m+-----------------------------------------------------------------------------+\033[0m\n");
+  printf("\033[1;36m| %-29s | %-20f | %-20f |\033[0m\n", "DownSample", t_down - t0, aver_time_down);
+  printf("\033[1;36m| %-29s | %-20f | %-20f |\033[0m\n", "ICP", t2 - t1, aver_time_icp);
+  printf("\033[1;36m| %-29s | %-20f | %-20f |\033[0m\n", "updateVoxelMap", t4 - t3, aver_time_map_inre);
+  printf("\033[1;34m+-----------------------------------------------------------------------------+\033[0m\n");
+  printf("\033[1;36m| %-29s | %-20f | %-20f |\033[0m\n", "Total Time", t4 - t0, aver_time_consu);
+  printf("\033[1;34m+-----------------------------------------------------------------------------+\033[0m\n");
 
   euler_cur = RotMtoEuler(_state.rot_end);
   fout_out << std::setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
